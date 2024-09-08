@@ -88,3 +88,16 @@ Tab:AddButton({
 	 loadstring(game:HttpGet("https://raw.githubusercontent.com/TtmScripter/GoodScript/main/LegendOfSpeed(Chinese)"))()
 	end
 })
+
+local Tab =Window:MakeTab({
+    Name = "bf",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+    Name = "redz",
+	Callback = function()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/REDzHUB/BloxFruits/main/redz9999"))()
+	end
+})
