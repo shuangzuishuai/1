@@ -10,6 +10,7 @@ local about = Window:MakeTab({
 about:AddParagraph("该脚本免费")
 about:AddParagraph("该脚本完全公开且免费")
 about:AddParagraph("作者:霜")
+about:AddParagraph("帮助者:霜的左膀右臂(910557060）")
 
 local Tab =Window:MakeTab({
 	Name = "关于作者",
