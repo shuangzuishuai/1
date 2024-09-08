@@ -101,3 +101,16 @@ Tab:AddButton({
 	 loadstring(game:HttpGet("https://raw.githubusercontent.com/REDzHUB/BloxFruits/main/redz9999"))()
 	end
 })
+
+local Tab =Window:MakeTab({
+    Name = "忍者传奇",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+    Name = "剑客",
+	Callback = function()
+	 loadstring(game:HttpGet(('https://raw.githubusercontent.com/JianKeCX/JianKeV4/main/ChuXia')))()
+	end
+})
