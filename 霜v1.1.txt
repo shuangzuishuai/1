@@ -63,6 +63,13 @@ Tab:AddButton({
 	end
 })
 
+Tab:AddButton({
+    Name = "穿墙",
+	Callback = function()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/TtmScripter/OtherScript/main/Noclip"))()
+	end
+})
+
 local Tab =Window:MakeTab({
     Name = "doors",
 	Icon = "rbxassetid://4483345998",
