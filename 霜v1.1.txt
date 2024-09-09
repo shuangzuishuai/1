@@ -128,3 +128,24 @@ Tab:AddButton({
 	 loadstring(game:HttpGet(('https://raw.githubusercontent.com/JianKeCX/JianKeV4/main/ChuXia')))()
 	end
 })
+
+local Tab =Window:MakeTab({
+    Name = "俄亥俄州",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+    Name = "龙叔指令",
+	Callback = function()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/longshulol/long/main/longshu/Ohio"))()
+	end
+})
+
+about:AddParagraph("收钱开\关")
+about:AddParagraph("透开\关")
+about:AddParagraph("追踪开\关")
+about:AddParagraph("抢取款机开\关")
+about:AddParagraph("抢银行开\关")
+about:AddParagraph("穿墙开\关")
+about:AddParagraph("拳击光环开\关")
