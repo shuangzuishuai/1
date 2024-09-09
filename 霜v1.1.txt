@@ -197,3 +197,23 @@ Tab:AddButton({
 	 
 	end
 })
+
+local Tab =Window:MakeTab({
+    Name = "刀刃球",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+    Name = "1",
+	Callback = function()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/Hosvile/Refinement/main/MC%3ABlade%20Ball%20Parry%20V4.0.0",true))()
+	end
+})
+
+Tab:AddButton({
+    Name = "2",
+	Callback = function()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/3345-c-a-t-s-u-s/-beta-/main/AutoParry.lua"))()
+	end
+})
