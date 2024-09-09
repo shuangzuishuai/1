@@ -142,10 +142,51 @@ Tab:AddButton({
 	end
 })
 
-about:AddParagraph("收钱开\关")
-about:AddParagraph("透开\关")
-about:AddParagraph("追踪开\关")
-about:AddParagraph("抢取款机开\关")
-about:AddParagraph("抢银行开\关")
-about:AddParagraph("穿墙开\关")
-about:AddParagraph("拳击光环开\关")
+Tab:AddButton({
+    Name = "收钱开或收钱关",
+	Callback = function()
+	 
+	end
+})
+
+Tab:AddButton({
+    Name = "透开或透关",
+	Callback = function()
+	 
+	end
+})
+
+Tab:AddButton({
+    Name = "追踪开或追踪关",
+	Callback = function()
+	 
+	end
+})
+
+Tab:AddButton({
+    Name = "抢取款机开或抢取款机关",
+	Callback = function()
+	 
+	end
+})
+
+Tab:AddButton({
+    Name = "收银行开或抢银行关",
+	Callback = function()
+	 
+	end
+})
+
+Tab:AddButton({
+    Name = "穿墙开或穿墙关",
+	Callback = function()
+	 
+	end
+})
+
+Tab:AddButton({
+    Name = "拳击光环开或拳击光环关",
+	Callback = function()
+	 
+	end
+})
