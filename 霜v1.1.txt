@@ -143,6 +143,13 @@ Tab:AddButton({
 })
 
 Tab:AddButton({
+    Name = "下面的是上面脚本的指令 输入聊天框",
+	Callback = function()
+	 
+	end
+})
+
+Tab:AddButton({
     Name = "收钱开或收钱关",
 	Callback = function()
 	 
