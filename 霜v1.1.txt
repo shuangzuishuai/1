@@ -90,6 +90,13 @@ Tab:AddButton({
 	end
 })
 
+Tab:AddButton({
+    Name = "上面脚本的卡密是nrty",
+	Callback = function()
+	 
+	end
+})
+
 local Tab =Window:MakeTab({
     Name = "极速传奇",
 	Icon = "rbxassetid://4483345998",
