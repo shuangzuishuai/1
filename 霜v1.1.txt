@@ -71,9 +71,9 @@ Tab:AddButton({
 })
 
 Tab:AddButton({
-    Name = "透视",
+    Name = "光影v4(慎用，不要点太多次)",
 	Callback = function()
-	 loadstring(game:GetObjects("rbxassetid://10092697033")[1].Source)()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/MZEEN2424/Graphics/main/Graphics.xml"))()
 	end
 })
 
