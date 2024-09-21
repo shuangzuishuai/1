@@ -224,3 +224,23 @@ Tab:AddButton({
 	 loadstring(game:HttpGet("https://raw.githubusercontent.com/3345-c-a-t-s-u-s/-beta-/main/AutoParry.lua"))()
 	end
 })
+
+local Tab =Window:MakeTab({
+    Name = "越狱",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+    Name = "飞车",
+	Callback = function()
+	 loadstring(game:HttpGet('https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source'))()
+	end
+})
+
+Tab:AddButton({
+    Name = "vfly飞行 unvfly取消飞行 vfly +数字是速度",
+	Callback = function()
+	 
+	end
+})
