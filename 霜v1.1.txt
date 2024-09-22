@@ -244,3 +244,43 @@ Tab:AddButton({
 	 
 	end
 })
+
+local Tab =Window:MakeTab({
+    Name = "其余脚本中心",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+    Name = "xc脚本中心",
+	Callback = function()
+	loadstring(game:HttpGet("\104\116\116\112\115\58\47\47\112\97\115\116\101\98\105\110\46\99\111\109\47\114\97\119\47\103\101\109\120\72\119\65\49"))()
+	end
+})
+
+Tab:AddButton({
+    Name = "皮脚本",
+	Callback = function()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/xiaopi77/xiaopi77/main/QQ1002100032-Roblox-Pi-script.lua"))()
+	end
+})
+
+Tab:AddButton({
+    Name = "🐱脚本(等待修复)",
+	Callback = function()
+	 
+	end
+})
+
+local Tab =Window:MakeTab({
+    Name = "格林维尔",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+    Name = "1",
+	Callback = function()
+	loadstring(game:HttpGet("https://raw.githubusercontent.com/shuangzuishuai/1/refs/heads/main/%E6%A0%BC%E6%9E%97%E7%BB%B4%E5%B0%94.lua"))()
+	end
+})
