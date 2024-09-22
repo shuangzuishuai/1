@@ -266,9 +266,9 @@ Tab:AddButton({
 })
 
 Tab:AddButton({
-    Name = "🐱脚本(等待修复)",
+    Name = "🐱脚本",
 	Callback = function()
-	 
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/shuangzuishuai/1/refs/heads/main/%E7%8C%AB%E7%8C%AB%E8%84%9A%E6%9C%AC%E6%BA%90%E7%A0%81.txt"))()
 	end
 })
 
