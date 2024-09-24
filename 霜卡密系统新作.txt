@@ -1,0 +1,40 @@
+local OrionLib = loadstring(game:HttpGet(('https://raw.githubusercontent.com/shlexware/Orion/main/source')))()
+local Window = OrionLib:MakeWindow({Name = "密钥验证", HidePremium = false, SaveConfig = true, ConfigFolder = "OrionTest"})
+local plrs = game:GetService("Players")
+local plr = plrs.LocalPlayer
+local key = ''
+local set = ''霜最帅
+
+
+local Tab = Window:MakeTab({
+    Name = "公告",
+    Icon = "rbxassetid://4483345998",
+    PremiumOnly = false
+})
+
+Tab:AddTextbox({
+  Name = "输入密钥",
+  Default = "",
+  TextDisappear = false,
+  Callback = function(Value)
+ Key =　Value
+  end
+})
+
+Tab:AddButton({
+	Name = "验证",	
+	Callback = function()
+if Key == set then
+loadstring("\45\45\32\232\132\154\230\156\172\230\148\190\232\191\153\233\135\140\10\108\111\97\100\115\116\114\105\110\103\40\103\97\109\101\58\72\116\116\112\71\101\116\40\34\104\116\116\112\115\58\47\47\114\97\119\46\103\105\116\104\117\98\117\115\101\114\99\111\110\116\101\110\116\46\99\111\109\47\115\104\117\97\110\103\122\117\105\115\104\117\97\105\47\49\47\109\97\105\110\47\37\69\57\37\57\67\37\57\67\118\49\46\49\46\116\120\116\34\41\41\40\41\10")()
+
+
+else
+OrionLib:MakeNotification({
+	Name = "卡密",
+	Content = " 密钥错误.",
+	Image = "rbxassetid://7734068321",
+	Time = 5
+})
+end
+end
+})
