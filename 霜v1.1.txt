@@ -97,6 +97,13 @@ Tab:AddButton({
 	end
 })
 
+Tab:AddButton({
+    Name = "可免疫rush",
+	Callback = function()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/YxZad/wdwadXz/refs/heads/main/YEHAX.lua"))()
+	end
+})
+
 local Tab =Window:MakeTab({
     Name = "极速传奇",
 	Icon = "rbxassetid://4483345998",
