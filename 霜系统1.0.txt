@@ -1,0 +1,247 @@
+local OrionLib = loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Orion/main/source"))()
+local Window = OrionLib:MakeWindow({Name = "
+霜中心", HidePremium = false, IntroText = "霜中心"})
+
+local about = Window:MakeTab({
+    Name = "霜制作",
+    Icon = "rbxassetid://4483345998",
+    PremiumOnly = false
+})
+
+about:AddParagraph("该脚本免费")
+about:AddParagraph("该脚本完全公开且免费")
+about:AddParagraph("作者:霜")
+
+local Tab =Window:MakeTab({
+	Name = "关于作者",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+	Name = "复制作者QQ",
+	Callback = function()
+     setclipboard("3557706928")
+  	end
+})
+
+OrionLib:MakeNotification({
+	Name = "霜中心",
+	Content = "欢迎使用霜中心",
+	Image = "rbxassetid://4483345998",
+	Time = 2
+})
+
+local Tab =Window:MakeTab({
+    Name = "通用",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddTextbox({
+	Name = "移动速度",
+	Default = "",
+	TextDisappear = true,
+	Callback = function(Value)
+		game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = Value
+	end
+})
+
+Tab:AddTextbox({
+	Name = "跳跃高度",
+	Default = "",
+	TextDisappear = true,
+	Callback = function(Value)
+		game.Players.LocalPlayer.Character.Humanoid.JumpPower = Value
+	end
+})
+
+Tab:AddButton({
+    Name = "飞行",
+	Callback = function()
+	loadstring("\108\111\97\100\115\116\114\105\110\103\40\103\97\109\101\58\72\116\116\112\71\101\116\34\104\116\116\112\115\58\47\47\112\97\115\116\101\98\105\110\46\99\111\109\47\114\97\119\47\83\76\120\100\97\75\112\119\34\41\40\41\10")()
+	end
+})
+
+Tab:AddButton({
+    Name = "穿墙",
+	Callback = function()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/TtmScripter/OtherScript/main/Noclip"))()
+	end
+})
+
+Tab:AddButton({
+    Name = "透视",
+	Callback = function()
+	 loadstring(game:GetObjects("rbxassetid://10092697033")[1].Source)()
+	end
+})
+
+Tab:AddButton({
+    Name = "光影v4(慎用，不要点太多次)",
+	Callback = function()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/MZEEN2424/Graphics/main/Graphics.xml"))()
+	end
+})
+
+local Tab =Window:MakeTab({
+    Name = "doors",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+    Name = "DOORS floor2",
+	Callback = function()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/zuohongjian/bjb/main/ZS%20III", true))()
+	end
+})
+
+Tab:AddButton({
+    Name = "上面脚本的卡密是nrty",
+	Callback = function()
+	 
+	end
+})
+
+local Tab =Window:MakeTab({
+    Name = "极速传奇",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+    Name = "1",
+	Callback = function()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/TtmScripter/GoodScript/main/LegendOfSpeed(Chinese)"))()
+	end
+})
+
+local Tab =Window:MakeTab({
+    Name = "bf",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+    Name = "redz",
+	Callback = function()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/REDzHUB/BloxFruits/main/redz9999"))()
+	end
+})
+
+local Tab =Window:MakeTab({
+    Name = "忍者传奇",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+    Name = "剑客",
+	Callback = function()
+	 loadstring(game:HttpGet(('https://raw.githubusercontent.com/JianKeCX/JianKeV4/main/ChuXia')))()
+	end
+})
+
+
+
+
+local Tab =Window:MakeTab({
+    Name = "刀刃球",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+    Name = "1",
+	Callback = function()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/Hosvile/Refinement/main/MC%3ABlade%20Ball%20Parry%20V4.0.0",true))()
+	end
+})
+
+Tab:AddButton({
+    Name = "2",
+	Callback = function()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/3345-c-a-t-s-u-s/-beta-/main/AutoParry.lua"))()
+	end
+})
+
+local Tab =Window:MakeTab({
+    Name = "越狱",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+    Name = "飞车",
+	Callback = function()
+	 loadstring(game:HttpGet('https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source'))()
+	end
+})
+
+Tab:AddButton({
+    Name = "vfly飞行 unvfly取消飞行 vfly +数字是速度",
+	Callback = function()
+	 
+	end
+})
+
+local Tab =Window:MakeTab({
+    Name = "其余脚本中心",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+    Name = "xc脚本中心",
+	Callback = function()
+	loadstring(game:HttpGet("\104\116\116\112\115\58\47\47\112\97\115\116\101\98\105\110\46\99\111\109\47\114\97\119\47\103\101\109\120\72\119\65\49"))()
+	end
+})
+
+Tab:AddButton({
+    Name = "皮脚本",
+	Callback = function()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/xiaopi77/xiaopi77/main/QQ1002100032-Roblox-Pi-script.lua"))()
+	end
+})
+
+Tab:AddButton({
+    Name = "🐱脚本",
+	Callback = function()
+	 loadstring(game:HttpGet("https://raw.githubusercontent.com/shuangzuishuai/1/refs/heads/main/%E7%8C%AB%E7%8C%AB%E8%84%9A%E6%9C%AC%E6%BA%90%E7%A0%81.txt"))()
+	end
+})
+
+Tab:AddButton({
+    Name = "霜脚本",
+	Callback = function()
+	 loadstring("\45\45\32\232\132\154\230\156\172\230\148\190\232\191\153\233\135\140\10\108\111\97\100\115\116\114\105\110\103\40\103\97\109\101\58\72\116\116\112\71\101\116\40\34\104\116\116\112\115\58\47\47\114\97\119\46\103\105\116\104\117\98\117\115\101\114\99\111\110\116\101\110\116\46\99\111\109\47\115\104\117\97\110\103\122\117\105\115\104\117\97\105\47\49\47\109\97\105\110\47\37\69\57\37\57\67\37\57\67\118\49\46\49\46\116\120\116\34\41\41\40\41\10")()
+	end
+})
+
+local Tab =Window:MakeTab({
+    Name = "格林维尔",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+    Name = "1",
+	Callback = function()
+	loadstring(game:HttpGet("https://raw.githubusercontent.com/shuangzuishuai/1/refs/heads/main/%E6%A0%BC%E6%9E%97%E7%BB%B4%E5%B0%94.lua"))()
+	end
+})
+
+local Tab =Window:MakeTab({
+    Name = "压力",
+	Icon = "rbxassetid://4483345998",
+	PremiumOnly = false
+})
+
+Tab:AddButton({
+    Name = "1",
+	Callback = function()
+	 loadstring(game:HttpGet("\104\116\116\112\115\58\47\47\114\97\119\46\103\105\116\104\117\98\117\115\101\114\99\111\110\116\101\110\116\46\99\111\109\47\103\101\116\122\106\110\78\83\75\78\83\47\67\52\66\57\45\51\51\67\50\65\45\49\67\49\66\48\45\53\52\48\72\86\45\83\71\54\71\56\47\109\97\105\110\47\80\114\111\116\101\99\116\101\100\95\54\50\56\49\54\56\54\49\54\48\57\52\51\49\48\51\48\53"))()
+	end
+})
