@@ -1,641 +1,700 @@
 --[[
-	FlightController.local.luau
-	放置位置: StarterPlayer > StarterPlayerScripts (LocalScript)
+    辞飞行 V3 - 全游戏通用版
+    UI: 深色主题面板 (可拖动/可收起/丝滑动画/速度控制/关闭按钮)
+    引擎: TranslateBy + BodyGyro/BodyVelocity + 禁用Humanoid状态 (V3机制)
+    兼容: R6/R15 | PC键盘(WASD/Space/Shift) + 手机摇杆/触摸按钮
+    快捷键: F飞行 | H收起 | R减速 | T加速
 
-	功能:
-	- 右下角 UI 面板: "飞行" / "停止飞行" 两个按钮
-	- 飞行时: WASD 按摄像机方向移动, Space 上升, Shift 下降
-	- 键盘快捷键 F 一键切换飞行
-	- 角色死亡/重生自动停止飞行
+    速度说明: 1 = 基础速度, 数值越大越快, 最大100
+    使用方法: 将此代码放入执行器或LocalScript中运行
 ]]
-
-print("[FlightController] 脚本开始加载...")
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
+local StarterGui = game:GetService("StarterGui")
 
 local player = Players.LocalPlayer
-if not player then
-	warn("[FlightController] 无法获取 LocalPlayer")
-	return
-end
-print("[FlightController] 玩家已获取:", player.Name)
+if not player then return end
 
--- 等待 PlayerGui
 local playerGui = player:WaitForChild("PlayerGui", 10)
-if not playerGui then
-	warn("[FlightController] 找不到 PlayerGui, 10秒超时")
-	return
-end
-print("[FlightController] PlayerGui 已就绪")
+if not playerGui then return end
+
+local isTouch = UserInputService.TouchEnabled
+
+-- 通知
+pcall(function()
+    StarterGui:SetCore("SendNotification", {
+        Title = "辞飞行 V3";
+        Text = "全游戏通用 | 注入成功";
+        Duration = 5;
+    })
+end)
 
 -- ===== 状态 =====
 local flying = false
-local flySpeed = 1           -- 飞行速度倍率 (1=走路速度, 越大越快)
+local flySpeed = 1
 local FLY_SPEED_DEFAULT = 1
-local FLY_SPEED_MIN = 0
+local FLY_SPEED_MIN = 1
 local FLY_SPEED_MAX = 100
-local FLY_SPEED_STEP = 10
-local bodyVelocity = nil
+local FLY_SPEED_STEP = 1
+local tpwalking = false
+local upPressed = false
+local downPressed = false
+local hbConnection = nil
 local bodyGyro = nil
-local renderConnection = nil
+local bodyVelocity = nil
 
--- 前置声明 (在 startFly/stopFly 中使用, 实际定义在 UI 区域)
-local updateSpeedDisplay = nil
-local changeSpeed = nil
-
--- ===== 飞行逻辑 =====
-
-local function startFly()
-	print("[FlightController] 尝试开始飞行, 角色状态:", player.Character ~= nil)
-	local character = player.Character
-	if not character then
-		warn("[FlightController] 没有角色, 飞行失败")
-		return
-	end
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	local rootPart = character:FindFirstChild("HumanoidRootPart")
-	if not humanoid or not rootPart then
-		warn("[FlightController] 缺少 Humanoid 或 HumanoidRootPart")
-		return
-	end
-	print("[FlightController] 飞行启动中...")
-
-	-- 清理旧的
-	if bodyVelocity then bodyVelocity:Destroy() end
-	if bodyGyro then bodyGyro:Destroy() end
-
-	humanoid.PlatformStand = true
-
-	bodyVelocity = Instance.new("BodyVelocity")
-	bodyVelocity.MaxForce = Vector3.new(1, 1, 1) * 1e5
-	bodyVelocity.Velocity = Vector3.zero
-	bodyVelocity.Parent = rootPart
-
-	bodyGyro = Instance.new("BodyGyro")
-	bodyGyro.MaxTorque = Vector3.new(1, 1, 1) * 1e5
-	bodyGyro.P = 1e4
-	bodyGyro.CFrame = rootPart.CFrame
-	bodyGyro.Parent = rootPart
-
-	flying = true
-	updateSpeedDisplay()
-	local walkSpeed = humanoid.WalkSpeed > 0 and humanoid.WalkSpeed or 16
-	print("[FlightController] ✓ 飞行中! 倍率:", flySpeed, "实际速度:", flySpeed * walkSpeed, "studs/s")
-
-	-- 每帧更新飞行方向和速度
-	if renderConnection then renderConnection:Disconnect() end
-	renderConnection = RunService.RenderStepped:Connect(function()
-		if not flying or not bodyVelocity or not bodyGyro then return end
-
-		local char = player.Character
-		if not char then return end
-		local root = char:FindFirstChild("HumanoidRootPart")
-		if not root then return end
-
-		local cam = workspace.CurrentCamera
-		if not cam then return end
-
-		local camCFrame = cam.CFrame
-		local forward = camCFrame.LookVector
-		local right = camCFrame.RightVector
-		local up = Vector3.new(0, 1, 0)
-
-		local moveVec = Vector3.zero
-		if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveVec += forward end
-		if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveVec -= forward end
-		if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveVec -= right end
-		if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveVec += right end
-		if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveVec += up end
-		if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then moveVec -= up end
-
-		if moveVec.Magnitude > 0 then
-			-- flySpeed 是倍率: 1 = 走路速度(WalkSpeed), 数值越大越快
-			local walkSpeed = humanoid.WalkSpeed > 0 and humanoid.WalkSpeed or 16
-			moveVec = moveVec.Unit * (flySpeed * walkSpeed)
-		end
-
-		bodyVelocity.Velocity = moveVec
-		bodyGyro.CFrame = camCFrame
-	end)
-end
-
-local function stopFly()
-	print("[FlightController] 停止飞行")
-	local character = player.Character
-	if character then
-		local humanoid = character:FindFirstChildOfClass("Humanoid")
-		if humanoid then
-			humanoid.PlatformStand = false
-		end
-	end
-
-	if bodyVelocity then
-		bodyVelocity:Destroy()
-		bodyVelocity = nil
-	end
-	if bodyGyro then
-		bodyGyro:Destroy()
-		bodyGyro = nil
-	end
-	if renderConnection then
-		renderConnection:Disconnect()
-		renderConnection = nil
-	end
-
-	flying = false
-	updateSpeedDisplay()  -- 降落后显示速度为 0
-end
-
-local function toggleFly()
-	if flying then
-		stopFly()
-	else
-		startFly()
-	end
-end
-
--- ===== UI 创建 (带错误处理) =====
-
-local flyBtn = nil
-local stopBtn = nil
-local panel = nil
-local titleBar = nil
-local minBtn = nil
-local hintLabel = nil
+-- 前置声明
+local updateSpeedDisplay, changeSpeed, toggleFly, startFly, stopFly
+local flyBtn, stopBtn, panel, titleBar, minBtn, closeBtn, hintLabel
+local gui
 local collapsed = false
 local panelFullPos = UDim2.new(1, -240, 1, -250)
 local panelFullSize = UDim2.new(0, 220, 0, 230)
 local panelMiniSize = UDim2.new(0, 180, 0, 40)
-local dividerLine = nil
-local dividerLine2 = nil
-local speedRow = nil
-local speedDownBtn = nil
-local speedUpBtn = nil
-local speedTextBox = nil
-local speedLabel = nil
+local dividerLine, dividerLine2, speedRow, speedDownBtn, speedUpBtn, speedTextBox, speedLabel
+local upBtn, downBtn
 
--- 更新速度显示
+-- 需要禁用/恢复的 Humanoid 状态
+local humanoidStates = {
+    Enum.HumanoidStateType.Climbing,
+    Enum.HumanoidStateType.FallingDown,
+    Enum.HumanoidStateType.Flying,
+    Enum.HumanoidStateType.Freefall,
+    Enum.HumanoidStateType.GettingUp,
+    Enum.HumanoidStateType.Jumping,
+    Enum.HumanoidStateType.Landed,
+    Enum.HumanoidStateType.Physics,
+    Enum.HumanoidStateType.PlatformStanding,
+    Enum.HumanoidStateType.Ragdoll,
+    Enum.HumanoidStateType.Running,
+    Enum.HumanoidStateType.RunningNoPhysics,
+    Enum.HumanoidStateType.Seated,
+    Enum.HumanoidStateType.StrafingNoPhysics,
+    Enum.HumanoidStateType.Swimming,
+}
+
+-- ===== 飞行逻辑 (V3 机制) =====
+
+startFly = function()
+    local char = player.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    -- 禁用 Humanoid 状态 (V3 核心: 防止物理干扰)
+    for _, state in ipairs(humanoidStates) do
+        hum:SetStateEnabled(state, false)
+    end
+    hum:ChangeState(Enum.HumanoidStateType.Swimming)
+
+    -- 禁用动画
+    local animate = char:FindFirstChild("Animate")
+    if animate then animate.Disabled = true end
+    for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
+        track:AdjustSpeed(0)
+    end
+
+    hum.PlatformStand = true
+
+    -- BodyGyro + BodyVelocity (V3: 保持浮空 + 朝向)
+    local isR6 = hum.RigType == Enum.HumanoidRigType.R6
+    local bodyPart = isR6 and char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+    if not bodyPart then bodyPart = root end
+
+    if bodyGyro then bodyGyro:Destroy() end
+    bodyGyro = Instance.new("BodyGyro")
+    bodyGyro.P = 9e4
+    bodyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    bodyGyro.CFrame = bodyPart.CFrame
+    bodyGyro.Parent = bodyPart
+
+    if bodyVelocity then bodyVelocity:Destroy() end
+    bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.Velocity = Vector3.new(0, 0.1, 0)
+    bodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    bodyVelocity.Parent = bodyPart
+
+    -- TranslateBy 移动循环 (V3 核心: 全游戏通用移动)
+    tpwalking = true
+    if hbConnection then hbConnection:Disconnect() end
+    hbConnection = RunService.Heartbeat:Connect(function()
+        if not tpwalking then return end
+        local c = player.Character
+        if not c then return end
+        local h = c:FindFirstChildOfClass("Humanoid")
+        if not h then return end
+        local r = c:FindFirstChild("HumanoidRootPart")
+        if not r then return end
+
+        -- 水平移动: TranslateBy + MoveDirection (兼容PC键盘和手机摇杆)
+        if h.MoveDirection.Magnitude > 0 then
+            c:TranslateBy(h.MoveDirection * flySpeed)
+        end
+
+        -- 垂直移动: CFrame (上升/下降)
+        local upDown = 0
+        if upPressed then upDown = upDown + 1 end
+        if downPressed then upDown = upDown - 1 end
+        -- PC键盘上升/下降
+        if not isTouch then
+            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then upDown = upDown + 1 end
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then upDown = upDown - 1 end
+        end
+        if upDown ~= 0 then
+            r.CFrame = r.CFrame * CFrame.new(0, upDown * flySpeed, 0)
+        end
+
+        -- BodyGyro 跟随相机朝向
+        if bodyGyro and bodyGyro.Parent then
+            local cam = workspace.CurrentCamera
+            if cam then bodyGyro.CFrame = cam.CFrame end
+        end
+    end)
+
+    flying = true
+    if upBtn then upBtn.Visible = true end
+    if downBtn then downBtn.Visible = true end
+    if flyBtn then flyBtn.BackgroundColor3 = Color3.fromRGB(80, 200, 100) end
+    if stopBtn then stopBtn.BackgroundColor3 = Color3.fromRGB(120, 60, 65) end
+    updateSpeedDisplay()
+end
+
+stopFly = function()
+    local char = player.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            -- 恢复 Humanoid 状态
+            for _, state in ipairs(humanoidStates) do
+                hum:SetStateEnabled(state, true)
+            end
+            hum:ChangeState(Enum.HumanoidStateType.RunningNoPhysics)
+            hum.PlatformStand = false
+        end
+        -- 恢复动画
+        local animate = char:FindFirstChild("Animate")
+        if animate then animate.Disabled = false end
+    end
+
+    tpwalking = false
+    if hbConnection then hbConnection:Disconnect() hbConnection = nil end
+    if bodyGyro then bodyGyro:Destroy() bodyGyro = nil end
+    if bodyVelocity then bodyVelocity:Destroy() bodyVelocity = nil end
+
+    flying = false
+    upPressed = false
+    downPressed = false
+    if upBtn then upBtn.Visible = false end
+    if downBtn then downBtn.Visible = false end
+    if flyBtn then flyBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80) end
+    if stopBtn then stopBtn.BackgroundColor3 = Color3.fromRGB(160, 70, 75) end
+    updateSpeedDisplay()
+end
+
+toggleFly = function()
+    if flying then stopFly() else startFly() end
+end
+
 updateSpeedDisplay = function()
-	if not speedTextBox then return end
-	if flying then
-		speedTextBox.Text = tostring(flySpeed)
-	else
-		speedTextBox.Text = "0"
-	end
+    if not speedTextBox then return end
+    if flying then
+        speedTextBox.Text = tostring(flySpeed)
+    else
+        speedTextBox.Text = "0"
+    end
 end
 
--- 修改飞行速度
 changeSpeed = function(newSpeed)
-	flySpeed = math.clamp(math.floor(newSpeed), FLY_SPEED_MIN, FLY_SPEED_MAX)
-	updateSpeedDisplay()
+    flySpeed = math.clamp(math.floor(newSpeed), FLY_SPEED_MIN, FLY_SPEED_MAX)
+    updateSpeedDisplay()
 end
 
--- 平滑切换展开/折叠
+-- ===== UI 动画 =====
+
 local function tweenPanel(toCollapsed)
-	if not panel or not flyBtn or not stopBtn or not hintLabel or not dividerLine or not minBtn then
-		return
-	end
-	collapsed = toCollapsed
-	local targetSize = collapsed and panelMiniSize or panelFullSize
+    if not panel or not flyBtn or not stopBtn or not hintLabel or not dividerLine or not minBtn then
+        return
+    end
+    collapsed = toCollapsed
+    local targetSize = collapsed and panelMiniSize or panelFullSize
 
-	-- 标题和按钮的淡入淡出
-	local tweenInfo = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-	TweenService:Create(panel, tweenInfo, { Size = targetSize }):Play()
+    local tweenInfo = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+    TweenService:Create(panel, tweenInfo, { Size = targetSize }):Play()
 
-	-- 需要淡入淡出的额外元素
-	local extraElems = { dividerLine2, speedRow, speedLabel }
-	if collapsed then
-		-- 收起: 按钮/分隔线/提示淡出, 标题缩到一行
-		TweenService:Create(dividerLine, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Play()
-		TweenService:Create(flyBtn, TweenInfo.new(0.2), { BackgroundTransparency = 1, TextTransparency = 1 }):Play()
-		TweenService:Create(stopBtn, TweenInfo.new(0.2), { BackgroundTransparency = 1, TextTransparency = 1 }):Play()
-		TweenService:Create(hintLabel, TweenInfo.new(0.2), { TextTransparency = 1 }):Play()
-		for _, el in ipairs(extraElems) do
-			if el then
-				local targetT = 1
-				if el:IsA("TextLabel") or el:IsA("TextBox") then
-					TweenService:Create(el, TweenInfo.new(0.2), { TextTransparency = targetT }):Play()
-				end
-				if el.BackgroundTransparency < 1 then
-					TweenService:Create(el, TweenInfo.new(0.2), { BackgroundTransparency = targetT }):Play()
-				end
-			end
-		end
-		-- 按钮/输入框也淡出
-		if speedDownBtn then TweenService:Create(speedDownBtn, TweenInfo.new(0.2), { BackgroundTransparency = 1, TextTransparency = 1 }):Play() end
-		if speedUpBtn then TweenService:Create(speedUpBtn, TweenInfo.new(0.2), { BackgroundTransparency = 1, TextTransparency = 1 }):Play() end
-		if speedTextBox then TweenService:Create(speedTextBox, TweenInfo.new(0.2), { BackgroundTransparency = 1, TextTransparency = 1 }):Play() end
-		task.wait(0.2)
-		dividerLine.Visible = false
-		flyBtn.Visible = false
-		stopBtn.Visible = false
-		hintLabel.Visible = false
-		for _, el in ipairs(extraElems) do if el then el.Visible = false end end
-		if speedDownBtn then speedDownBtn.Visible = false end
-		if speedUpBtn then speedUpBtn.Visible = false end
-		if speedTextBox then speedTextBox.Visible = false end
-		minBtn.Text = "+"
-	else
-		-- 展开: 标题回到完整, 按钮淡入
-		dividerLine.Visible = true
-		flyBtn.Visible = true
-		stopBtn.Visible = true
-		hintLabel.Visible = true
-		for _, el in ipairs(extraElems) do if el then el.Visible = true end end
-		if speedDownBtn then speedDownBtn.Visible = true end
-		if speedUpBtn then speedUpBtn.Visible = true end
-		if speedTextBox then speedTextBox.Visible = true end
-		TweenService:Create(dividerLine, TweenInfo.new(0.3), { BackgroundTransparency = 0 }):Play()
-		TweenService:Create(flyBtn, TweenInfo.new(0.3), { BackgroundTransparency = 0, TextTransparency = 0 }):Play()
-		TweenService:Create(stopBtn, TweenInfo.new(0.3), { BackgroundTransparency = 0, TextTransparency = 0 }):Play()
-		TweenService:Create(hintLabel, TweenInfo.new(0.3), { TextTransparency = 0 }):Play()
-		for _, el in ipairs(extraElems) do
-			if el then
-				if el:IsA("TextLabel") or el:IsA("TextBox") then
-					TweenService:Create(el, TweenInfo.new(0.3), { TextTransparency = 0 }):Play()
-				end
-				if el.BackgroundTransparency < 1 then
-					TweenService:Create(el, TweenInfo.new(0.3), { BackgroundTransparency = 0 }):Play()
-				end
-			end
-		end
-		if speedDownBtn then TweenService:Create(speedDownBtn, TweenInfo.new(0.3), { BackgroundTransparency = 0, TextTransparency = 0 }):Play() end
-		if speedUpBtn then TweenService:Create(speedUpBtn, TweenInfo.new(0.3), { BackgroundTransparency = 0, TextTransparency = 0 }):Play() end
-		if speedTextBox then TweenService:Create(speedTextBox, TweenInfo.new(0.3), { BackgroundTransparency = 0, TextTransparency = 0 }):Play() end
-		minBtn.Text = "—"
-	end
+    local extraElems = { dividerLine2, speedRow, speedLabel }
+    if collapsed then
+        TweenService:Create(dividerLine, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Play()
+        TweenService:Create(flyBtn, TweenInfo.new(0.2), { BackgroundTransparency = 1, TextTransparency = 1 }):Play()
+        TweenService:Create(stopBtn, TweenInfo.new(0.2), { BackgroundTransparency = 1, TextTransparency = 1 }):Play()
+        TweenService:Create(hintLabel, TweenInfo.new(0.2), { TextTransparency = 1 }):Play()
+        for _, el in ipairs(extraElems) do
+            if el then
+                if el:IsA("TextLabel") or el:IsA("TextBox") then
+                    TweenService:Create(el, TweenInfo.new(0.2), { TextTransparency = 1 }):Play()
+                end
+                TweenService:Create(el, TweenInfo.new(0.2), { BackgroundTransparency = 1 }):Play()
+            end
+        end
+        if speedDownBtn then TweenService:Create(speedDownBtn, TweenInfo.new(0.2), { BackgroundTransparency = 1, TextTransparency = 1 }):Play() end
+        if speedUpBtn then TweenService:Create(speedUpBtn, TweenInfo.new(0.2), { BackgroundTransparency = 1, TextTransparency = 1 }):Play() end
+        if speedTextBox then TweenService:Create(speedTextBox, TweenInfo.new(0.2), { BackgroundTransparency = 1, TextTransparency = 1 }):Play() end
+        task.wait(0.2)
+        dividerLine.Visible = false
+        flyBtn.Visible = false
+        stopBtn.Visible = false
+        hintLabel.Visible = false
+        for _, el in ipairs(extraElems) do if el then el.Visible = false end end
+        if speedDownBtn then speedDownBtn.Visible = false end
+        if speedUpBtn then speedUpBtn.Visible = false end
+        if speedTextBox then speedTextBox.Visible = false end
+        minBtn.Text = "+"
+    else
+        dividerLine.Visible = true
+        flyBtn.Visible = true
+        stopBtn.Visible = true
+        hintLabel.Visible = true
+        for _, el in ipairs(extraElems) do if el then el.Visible = true end end
+        if speedDownBtn then speedDownBtn.Visible = true end
+        if speedUpBtn then speedUpBtn.Visible = true end
+        if speedTextBox then speedTextBox.Visible = true end
+        TweenService:Create(dividerLine, TweenInfo.new(0.3), { BackgroundTransparency = 0 }):Play()
+        TweenService:Create(flyBtn, TweenInfo.new(0.3), { BackgroundTransparency = 0, TextTransparency = 0 }):Play()
+        TweenService:Create(stopBtn, TweenInfo.new(0.3), { BackgroundTransparency = 0, TextTransparency = 0 }):Play()
+        TweenService:Create(hintLabel, TweenInfo.new(0.3), { TextTransparency = 0 }):Play()
+        for _, el in ipairs(extraElems) do
+            if el then
+                if el:IsA("TextLabel") or el:IsA("TextBox") then
+                    TweenService:Create(el, TweenInfo.new(0.3), { TextTransparency = 0 }):Play()
+                end
+                TweenService:Create(el, TweenInfo.new(0.3), { BackgroundTransparency = 0 }):Play()
+            end
+        end
+        if speedDownBtn then TweenService:Create(speedDownBtn, TweenInfo.new(0.3), { BackgroundTransparency = 0, TextTransparency = 0 }):Play() end
+        if speedUpBtn then TweenService:Create(speedUpBtn, TweenInfo.new(0.3), { BackgroundTransparency = 0, TextTransparency = 0 }):Play() end
+        if speedTextBox then TweenService:Create(speedTextBox, TweenInfo.new(0.3), { BackgroundTransparency = 0, TextTransparency = 0 }):Play() end
+        minBtn.Text = "—"
+    end
 end
 
+-- ===== UI 创建 =====
 local ok, err = pcall(function()
-	-- 删除可能已存在的旧 UI
-	local old = playerGui:FindFirstChild("FlightUI")
-	if old then old:Destroy() end
+    -- 删除旧 UI
+    local old = playerGui:FindFirstChild("FlightUI_V3")
+    if old then old:Destroy() end
 
-	local gui = Instance.new("ScreenGui")
-	gui.Name = "FlightUI"
-	gui.ResetOnSpawn = false
-	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-	gui.IgnoreGuiInset = false
-	gui.DisplayOrder = 10
-	gui.Parent = playerGui
+    gui = Instance.new("ScreenGui")
+    gui.Name = "FlightUI_V3"
+    gui.ResetOnSpawn = false
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.IgnoreGuiInset = false
+    gui.DisplayOrder = 10
+    gui.Parent = playerGui
 
-	-- 主面板
-	panel = Instance.new("Frame")
-	panel.Name = "Panel"
-	panel.Size = panelFullSize
-	panel.Position = panelFullPos
-	panel.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-	panel.BorderSizePixel = 0
-	panel.Active = false  -- 不拦截后面 UI 的鼠标事件
-	panel.Parent = gui
+    -- ===== 上升/下降按钮 (飞行时显示, 全平台兼容) =====
+    upBtn = Instance.new("TextButton")
+    upBtn.Name = "UpBtn"
+    upBtn.Size = UDim2.new(0, 60, 0, 60)
+    upBtn.Position = UDim2.new(1, -80, 0.5, -70)
+    upBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
+    upBtn.Text = "↑"
+    upBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    upBtn.Font = Enum.Font.GothamBold
+    upBtn.TextSize = 32
+    upBtn.AutoButtonColor = true
+    upBtn.Visible = false
+    upBtn.Parent = gui
+    local upCorner = Instance.new("UICorner")
+    upCorner.CornerRadius = UDim.new(0.5, 0)
+    upCorner.Parent = upBtn
+    local upStroke = Instance.new("UIStroke")
+    upStroke.Color = Color3.fromRGB(100, 220, 130)
+    upStroke.Thickness = 2
+    upStroke.Parent = upBtn
 
-	local panelCorner = Instance.new("UICorner")
-	panelCorner.CornerRadius = UDim.new(0, 12)
-	panelCorner.Parent = panel
+    downBtn = Instance.new("TextButton")
+    downBtn.Name = "DownBtn"
+    downBtn.Size = UDim2.new(0, 60, 0, 60)
+    downBtn.Position = UDim2.new(1, -80, 0.5, 10)
+    downBtn.BackgroundColor3 = Color3.fromRGB(160, 70, 75)
+    downBtn.Text = "↓"
+    downBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    downBtn.Font = Enum.Font.GothamBold
+    downBtn.TextSize = 32
+    downBtn.AutoButtonColor = true
+    downBtn.Visible = false
+    downBtn.Parent = gui
+    local downCorner = Instance.new("UICorner")
+    downCorner.CornerRadius = UDim.new(0.5, 0)
+    downCorner.Parent = downBtn
+    local downStroke = Instance.new("UIStroke")
+    downStroke.Color = Color3.fromRGB(220, 100, 105)
+    downStroke.Thickness = 2
+    downStroke.Parent = downBtn
 
-	local panelStroke = Instance.new("UIStroke")
-	panelStroke.Color = Color3.fromRGB(80, 80, 100)
-	panelStroke.Thickness = 1.5
-	panelStroke.Transparency = 0.3
-	panelStroke.Parent = panel
+    -- 上升/下降: 按住生效, 松开停止 (兼容鼠标 + 触摸)
+    upBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            upPressed = true
+        end
+    end)
+    upBtn.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            upPressed = false
+        end
+    end)
+    downBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            downPressed = true
+        end
+    end)
+    downBtn.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            downPressed = false
+        end
+    end)
 
-	-- 标题栏 (TextButton, 用于拖动)
-	titleBar = Instance.new("TextButton")
-	titleBar.Name = "TitleBar"
-	titleBar.Size = UDim2.new(1, 0, 0, 38)
-	titleBar.Position = UDim2.new(0, 0, 0, 0)
-	titleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
-	titleBar.BorderSizePixel = 0
-	titleBar.Text = ""
-	titleBar.AutoButtonColor = false
-	titleBar.Parent = panel
+    -- ===== 主面板 =====
+    panel = Instance.new("Frame")
+    panel.Name = "Panel"
+    panel.Size = panelFullSize
+    panel.Position = panelFullPos
+    panel.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+    panel.BorderSizePixel = 0
+    panel.Active = false
+    panel.Parent = gui
 
-	local titleCorner = Instance.new("UICorner")
-	titleCorner.CornerRadius = UDim.new(0, 12)
-	titleCorner.Parent = titleBar
+    local panelCorner = Instance.new("UICorner")
+    panelCorner.CornerRadius = UDim.new(0, 12)
+    panelCorner.Parent = panel
 
-	-- 标题文字
-	local titleText = Instance.new("TextLabel")
-	titleText.Name = "TitleText"
-	titleText.Size = UDim2.new(1, -80, 1, 0)
-	titleText.Position = UDim2.new(0, 12, 0, 0)
-	titleText.BackgroundTransparency = 1
-	titleText.Text = "辞飞行"
-	titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-	titleText.Font = Enum.Font.GothamBold
-	titleText.TextSize = 16
-	titleText.TextXAlignment = Enum.TextXAlignment.Left
-	titleText.Parent = titleBar
+    local panelStroke = Instance.new("UIStroke")
+    panelStroke.Color = Color3.fromRGB(80, 80, 100)
+    panelStroke.Thickness = 1.5
+    panelStroke.Transparency = 0.3
+    panelStroke.Parent = panel
 
-	-- 最小化按钮
-	minBtn = Instance.new("TextButton")
-	minBtn.Name = "MinBtn"
-	minBtn.Size = UDim2.new(0, 28, 0, 28)
-	minBtn.Position = UDim2.new(1, -36, 0, 5)
-	minBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
-	minBtn.Text = "—"
-	minBtn.TextColor3 = Color3.fromRGB(200, 200, 220)
-	minBtn.Font = Enum.Font.GothamBold
-	minBtn.TextSize = 16
-	minBtn.AutoButtonColor = true
-	minBtn.Parent = titleBar
+    -- 标题栏 (可拖动)
+    titleBar = Instance.new("TextButton")
+    titleBar.Name = "TitleBar"
+    titleBar.Size = UDim2.new(1, 0, 0, 38)
+    titleBar.Position = UDim2.new(0, 0, 0, 0)
+    titleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+    titleBar.BorderSizePixel = 0
+    titleBar.Text = ""
+    titleBar.AutoButtonColor = false
+    titleBar.Parent = panel
 
-	local minCorner = Instance.new("UICorner")
-	minCorner.CornerRadius = UDim.new(0, 6)
-	minCorner.Parent = minBtn
+    local titleCorner = Instance.new("UICorner")
+    titleCorner.CornerRadius = UDim.new(0, 12)
+    titleCorner.Parent = titleBar
 
-	-- 分隔线
-	dividerLine = Instance.new("Frame")
-	dividerLine.Size = UDim2.new(1, -20, 0, 1)
-	dividerLine.Position = UDim2.new(0, 10, 0, 42)
-	dividerLine.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
-	dividerLine.BorderSizePixel = 0
-	dividerLine.Parent = panel
+    -- 标题文字
+    local titleText = Instance.new("TextLabel")
+    titleText.Name = "TitleText"
+    titleText.Size = UDim2.new(1, -80, 1, 0)
+    titleText.Position = UDim2.new(0, 12, 0, 0)
+    titleText.BackgroundTransparency = 1
+    titleText.Text = "辞飞行 V3"
+    titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    titleText.Font = Enum.Font.GothamBold
+    titleText.TextSize = 16
+    titleText.TextXAlignment = Enum.TextXAlignment.Left
+    titleText.Parent = titleBar
 
-	-- 飞行按钮
-	flyBtn = Instance.new("TextButton")
-	flyBtn.Name = "FlyBtn"
-	flyBtn.Size = UDim2.new(1, -20, 0, 40)
-	flyBtn.Position = UDim2.new(0, 10, 0, 50)
-	flyBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
-	flyBtn.Text = "飞行"
-	flyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	flyBtn.Font = Enum.Font.GothamBold
-	flyBtn.TextSize = 16
-	flyBtn.AutoButtonColor = true
-	flyBtn.Parent = panel
+    -- 最小化按钮
+    minBtn = Instance.new("TextButton")
+    minBtn.Name = "MinBtn"
+    minBtn.Size = UDim2.new(0, 28, 0, 28)
+    minBtn.Position = UDim2.new(1, -70, 0, 5)
+    minBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+    minBtn.Text = "—"
+    minBtn.TextColor3 = Color3.fromRGB(200, 200, 220)
+    minBtn.Font = Enum.Font.GothamBold
+    minBtn.TextSize = 16
+    minBtn.AutoButtonColor = true
+    minBtn.Parent = titleBar
 
-	local flyCorner = Instance.new("UICorner")
-	flyCorner.CornerRadius = UDim.new(0, 8)
-	flyCorner.Parent = flyBtn
+    local minCorner = Instance.new("UICorner")
+    minCorner.CornerRadius = UDim.new(0, 6)
+    minCorner.Parent = minBtn
 
-	-- 停止按钮
-	stopBtn = Instance.new("TextButton")
-	stopBtn.Name = "StopBtn"
-	stopBtn.Size = UDim2.new(1, -20, 0, 40)
-	stopBtn.Position = UDim2.new(0, 10, 0, 96)
-	stopBtn.BackgroundColor3 = Color3.fromRGB(160, 70, 75)
-	stopBtn.Text = "降落"
-	stopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	stopBtn.Font = Enum.Font.GothamBold
-	stopBtn.TextSize = 16
-	stopBtn.AutoButtonColor = true
-	stopBtn.Parent = panel
+    -- 关闭按钮
+    closeBtn = Instance.new("TextButton")
+    closeBtn.Name = "CloseBtn"
+    closeBtn.Size = UDim2.new(0, 28, 0, 28)
+    closeBtn.Position = UDim2.new(1, -36, 0, 5)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+    closeBtn.Text = "×"
+    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.TextSize = 18
+    closeBtn.AutoButtonColor = true
+    closeBtn.Parent = titleBar
 
-	local stopCorner = Instance.new("UICorner")
-	stopCorner.CornerRadius = UDim.new(0, 8)
-	stopCorner.Parent = stopBtn
+    local closeCorner = Instance.new("UICorner")
+    closeCorner.CornerRadius = UDim.new(0, 6)
+    closeCorner.Parent = closeBtn
 
-	-- 第二分隔线
-	dividerLine2 = Instance.new("Frame")
-	dividerLine2.Name = "Divider2"
-	dividerLine2.Size = UDim2.new(1, -20, 0, 1)
-	dividerLine2.Position = UDim2.new(0, 10, 0, 142)
-	dividerLine2.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
-	dividerLine2.BorderSizePixel = 0
-	dividerLine2.Parent = panel
+    -- 分隔线
+    dividerLine = Instance.new("Frame")
+    dividerLine.Size = UDim2.new(1, -20, 0, 1)
+    dividerLine.Position = UDim2.new(0, 10, 0, 42)
+    dividerLine.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+    dividerLine.BorderSizePixel = 0
+    dividerLine.Parent = panel
 
-	-- 速度标签
-	speedLabel = Instance.new("TextLabel")
-	speedLabel.Name = "SpeedLabel"
-	speedLabel.Size = UDim2.new(1, -20, 0, 22)
-	speedLabel.Position = UDim2.new(0, 10, 0, 148)
-	speedLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-	speedLabel.BorderSizePixel = 0
-	speedLabel.Text = "飞行速度"
-	speedLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-	speedLabel.Font = Enum.Font.GothamMedium
-	speedLabel.TextSize = 12
-	speedLabel.TextXAlignment = Enum.TextXAlignment.Center
-	speedLabel.TextYAlignment = Enum.TextYAlignment.Center
-	speedLabel.Parent = panel
+    -- 飞行按钮
+    flyBtn = Instance.new("TextButton")
+    flyBtn.Name = "FlyBtn"
+    flyBtn.Size = UDim2.new(1, -20, 0, 40)
+    flyBtn.Position = UDim2.new(0, 10, 0, 50)
+    flyBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
+    flyBtn.Text = "飞行"
+    flyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    flyBtn.Font = Enum.Font.GothamBold
+    flyBtn.TextSize = 16
+    flyBtn.AutoButtonColor = true
+    flyBtn.Parent = panel
 
-	local speedLabelCorner = Instance.new("UICorner")
-	speedLabelCorner.CornerRadius = UDim.new(0, 6)
-	speedLabelCorner.Parent = speedLabel
+    local flyCorner = Instance.new("UICorner")
+    flyCorner.CornerRadius = UDim.new(0, 8)
+    flyCorner.Parent = flyBtn
 
-	local speedLabelStroke = Instance.new("UIStroke")
-	speedLabelStroke.Color = Color3.fromRGB(80, 80, 100)
-	speedLabelStroke.Thickness = 1
-	speedLabelStroke.Transparency = 0.5
-	speedLabelStroke.Parent = speedLabel
+    -- 降落按钮
+    stopBtn = Instance.new("TextButton")
+    stopBtn.Name = "StopBtn"
+    stopBtn.Size = UDim2.new(1, -20, 0, 40)
+    stopBtn.Position = UDim2.new(0, 10, 0, 96)
+    stopBtn.BackgroundColor3 = Color3.fromRGB(160, 70, 75)
+    stopBtn.Text = "降落"
+    stopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    stopBtn.Font = Enum.Font.GothamBold
+    stopBtn.TextSize = 16
+    stopBtn.AutoButtonColor = true
+    stopBtn.Parent = panel
 
-	-- 速度控制行容器
-	speedRow = Instance.new("Frame")
-	speedRow.Name = "SpeedRow"
-	speedRow.Size = UDim2.new(1, -20, 0, 34)
-	speedRow.Position = UDim2.new(0, 10, 0, 176)
-	speedRow.BackgroundTransparency = 1
-	speedRow.Parent = panel
+    local stopCorner = Instance.new("UICorner")
+    stopCorner.CornerRadius = UDim.new(0, 8)
+    stopCorner.Parent = stopBtn
 
-	-- 减速按钮
-	speedDownBtn = Instance.new("TextButton")
-	speedDownBtn.Name = "SpeedDown"
-	speedDownBtn.Size = UDim2.new(0, 40, 1, 0)
-	speedDownBtn.Position = UDim2.new(0, 0, 0, 0)
-	speedDownBtn.BackgroundColor3 = Color3.fromRGB(180, 120, 50)
-	speedDownBtn.Text = "-"
-	speedDownBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	speedDownBtn.Font = Enum.Font.GothamBold
-	speedDownBtn.TextSize = 20
-	speedDownBtn.AutoButtonColor = true
-	speedDownBtn.Parent = speedRow
+    -- 第二分隔线
+    dividerLine2 = Instance.new("Frame")
+    dividerLine2.Name = "Divider2"
+    dividerLine2.Size = UDim2.new(1, -20, 0, 1)
+    dividerLine2.Position = UDim2.new(0, 10, 0, 142)
+    dividerLine2.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+    dividerLine2.BorderSizePixel = 0
+    dividerLine2.Parent = panel
 
-	local downCorner = Instance.new("UICorner")
-	downCorner.CornerRadius = UDim.new(0, 8)
-	downCorner.Parent = speedDownBtn
+    -- 速度标签
+    speedLabel = Instance.new("TextLabel")
+    speedLabel.Name = "SpeedLabel"
+    speedLabel.Size = UDim2.new(1, -20, 0, 22)
+    speedLabel.Position = UDim2.new(0, 10, 0, 148)
+    speedLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    speedLabel.BorderSizePixel = 0
+    speedLabel.Text = "飞行速度"
+    speedLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
+    speedLabel.Font = Enum.Font.GothamMedium
+    speedLabel.TextSize = 12
+    speedLabel.TextXAlignment = Enum.TextXAlignment.Center
+    speedLabel.TextYAlignment = Enum.TextYAlignment.Center
+    speedLabel.Parent = panel
 
-	-- 速度输入框
-	speedTextBox = Instance.new("TextBox")
-	speedTextBox.Name = "SpeedInput"
-	speedTextBox.Size = UDim2.new(1, -90, 1, 0)
-	speedTextBox.Position = UDim2.new(0, 45, 0, 0)
-	speedTextBox.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
-	speedTextBox.Text = "0"
-	speedTextBox.TextColor3 = Color3.fromRGB(255, 220, 100)
-	speedTextBox.Font = Enum.Font.GothamBold
-	speedTextBox.TextSize = 16
-	speedTextBox.PlaceholderText = "0-100"
-	speedTextBox.ClearTextOnFocus = false
-	speedTextBox.TextScaled = false
-	speedTextBox.Parent = speedRow
+    local speedLabelCorner = Instance.new("UICorner")
+    speedLabelCorner.CornerRadius = UDim.new(0, 6)
+    speedLabelCorner.Parent = speedLabel
 
-	local textCorner = Instance.new("UICorner")
-	textCorner.CornerRadius = UDim.new(0, 8)
-	textCorner.Parent = speedTextBox
+    -- 速度控制行
+    speedRow = Instance.new("Frame")
+    speedRow.Name = "SpeedRow"
+    speedRow.Size = UDim2.new(1, -20, 0, 34)
+    speedRow.Position = UDim2.new(0, 10, 0, 176)
+    speedRow.BackgroundTransparency = 1
+    speedRow.Parent = panel
 
-	local textStroke = Instance.new("UIStroke")
-	textStroke.Color = Color3.fromRGB(80, 80, 100)
-	textStroke.Thickness = 1
-	textStroke.Parent = speedTextBox
+    -- 减速按钮
+    speedDownBtn = Instance.new("TextButton")
+    speedDownBtn.Name = "SpeedDown"
+    speedDownBtn.Size = UDim2.new(0, 40, 1, 0)
+    speedDownBtn.Position = UDim2.new(0, 0, 0, 0)
+    speedDownBtn.BackgroundColor3 = Color3.fromRGB(180, 120, 50)
+    speedDownBtn.Text = "-"
+    speedDownBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    speedDownBtn.Font = Enum.Font.GothamBold
+    speedDownBtn.TextSize = 20
+    speedDownBtn.AutoButtonColor = true
+    speedDownBtn.Parent = speedRow
 
-	-- 加速按钮
-	speedUpBtn = Instance.new("TextButton")
-	speedUpBtn.Name = "SpeedUp"
-	speedUpBtn.Size = UDim2.new(0, 40, 1, 0)
-	speedUpBtn.Position = UDim2.new(1, -40, 0, 0)
-	speedUpBtn.BackgroundColor3 = Color3.fromRGB(50, 140, 200)
-	speedUpBtn.Text = "+"
-	speedUpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	speedUpBtn.Font = Enum.Font.GothamBold
-	speedUpBtn.TextSize = 20
-	speedUpBtn.AutoButtonColor = true
-	speedUpBtn.Parent = speedRow
+    local downSpeedCorner = Instance.new("UICorner")
+    downSpeedCorner.CornerRadius = UDim.new(0, 8)
+    downSpeedCorner.Parent = speedDownBtn
 
-	local upCorner = Instance.new("UICorner")
-	upCorner.CornerRadius = UDim.new(0, 8)
-	upCorner.Parent = speedUpBtn
+    -- 速度输入框
+    speedTextBox = Instance.new("TextBox")
+    speedTextBox.Name = "SpeedInput"
+    speedTextBox.Size = UDim2.new(1, -90, 1, 0)
+    speedTextBox.Position = UDim2.new(0, 45, 0, 0)
+    speedTextBox.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    speedTextBox.Text = "0"
+    speedTextBox.TextColor3 = Color3.fromRGB(255, 220, 100)
+    speedTextBox.Font = Enum.Font.GothamBold
+    speedTextBox.TextSize = 16
+    speedTextBox.PlaceholderText = "1-100"
+    speedTextBox.ClearTextOnFocus = false
+    speedTextBox.TextScaled = false
+    speedTextBox.Parent = speedRow
 
-	-- 提示文字
-	hintLabel = Instance.new("TextLabel")
-	hintLabel.Name = "Hint"
-	hintLabel.Size = UDim2.new(1, -20, 0, 16)
-	hintLabel.Position = UDim2.new(0, 10, 0, 214)
-	hintLabel.BackgroundTransparency = 1
-	hintLabel.Text = "F飞行 | WASD移动 | H收起 | R减速 T加速"
-	hintLabel.TextColor3 = Color3.fromRGB(140, 140, 160)
-	hintLabel.Font = Enum.Font.Gotham
-	hintLabel.TextSize = 10
-	hintLabel.TextXAlignment = Enum.TextXAlignment.Center
-	hintLabel.Parent = panel
+    local textCorner = Instance.new("UICorner")
+    textCorner.CornerRadius = UDim.new(0, 8)
+    textCorner.Parent = speedTextBox
 
-	-- 初始化速度显示
-	updateSpeedDisplay()
+    local textStroke = Instance.new("UIStroke")
+    textStroke.Color = Color3.fromRGB(80, 80, 100)
+    textStroke.Thickness = 1
+    textStroke.Parent = speedTextBox
 
-	-- ===== 速度按钮事件 =====
-	speedDownBtn.MouseButton1Click:Connect(function()
-		changeSpeed(flySpeed - FLY_SPEED_STEP)
-	end)
+    -- 加速按钮
+    speedUpBtn = Instance.new("TextButton")
+    speedUpBtn.Name = "SpeedUp"
+    speedUpBtn.Size = UDim2.new(0, 40, 1, 0)
+    speedUpBtn.Position = UDim2.new(1, -40, 0, 0)
+    speedUpBtn.BackgroundColor3 = Color3.fromRGB(50, 140, 200)
+    speedUpBtn.Text = "+"
+    speedUpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    speedUpBtn.Font = Enum.Font.GothamBold
+    speedUpBtn.TextSize = 20
+    speedUpBtn.AutoButtonColor = true
+    speedUpBtn.Parent = speedRow
 
-	speedUpBtn.MouseButton1Click:Connect(function()
-		changeSpeed(flySpeed + FLY_SPEED_STEP)
-	end)
+    local upSpeedCorner = Instance.new("UICorner")
+    upSpeedCorner.CornerRadius = UDim.new(0, 8)
+    upSpeedCorner.Parent = speedUpBtn
 
-	-- 文本框: 输入完成后应用速度
-	speedTextBox.FocusLost:Connect(function(enterPressed)
-		local text = speedTextBox.Text
-		local num = tonumber(text)
-		if num then
-			changeSpeed(num)
-		else
-			updateSpeedDisplay()  -- 无效输入, 恢复原值
-		end
-	end)
+    -- 提示文字
+    hintLabel = Instance.new("TextLabel")
+    hintLabel.Name = "Hint"
+    hintLabel.Size = UDim2.new(1, -20, 0, 16)
+    hintLabel.Position = UDim2.new(0, 10, 0, 214)
+    hintLabel.BackgroundTransparency = 1
+    if isTouch then
+        hintLabel.Text = "摇杆移动 | ↑↓升降 | H收起"
+    else
+        hintLabel.Text = "F飞行 | WASD移动 | Space/Shift升降 | H收起 | R/T调速"
+    end
+    hintLabel.TextColor3 = Color3.fromRGB(140, 140, 160)
+    hintLabel.Font = Enum.Font.Gotham
+    hintLabel.TextSize = 10
+    hintLabel.TextXAlignment = Enum.TextXAlignment.Center
+    hintLabel.Parent = panel
 
-	-- ===== 拖动逻辑 =====
-	local dragging = false
-	local dragStart = Vector2.zero
-	local dragAbsStart = Vector2.zero  -- 记录拖动开始时面板的绝对屏幕坐标
-	local dragInput = nil
+    -- 初始化
+    updateSpeedDisplay()
 
-	titleBar.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = true
-			dragStart = Vector2.new(input.Position.X, input.Position.Y)
-			dragAbsStart = panel.AbsolutePosition  -- 用绝对坐标, 避免 Scale 混乱
-			dragInput = input
+    -- ===== 速度按钮事件 =====
+    speedDownBtn.MouseButton1Click:Connect(function()
+        changeSpeed(flySpeed - FLY_SPEED_STEP)
+    end)
+    speedUpBtn.MouseButton1Click:Connect(function()
+        changeSpeed(flySpeed + FLY_SPEED_STEP)
+    end)
+    speedTextBox.FocusLost:Connect(function(enterPressed)
+        local num = tonumber(speedTextBox.Text)
+        if num then
+            changeSpeed(num)
+        else
+            updateSpeedDisplay()
+        end
+    end)
 
-			-- 视觉反馈: 标题栏轻微变亮
-			TweenService:Create(titleBar, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(50, 50, 70) }):Play()
-		end
-	end)
+    -- ===== 拖动逻辑 (AbsolutePosition, 不会消失) =====
+    local dragging = false
+    local dragStart = Vector2.zero
+    local dragAbsStart = Vector2.zero
 
-	titleBar.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = false
-			dragInput = nil
-			-- 恢复标题栏颜色
-			TweenService:Create(titleBar, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(35, 35, 50) }):Play()
-		end
-	end)
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = Vector2.new(input.Position.X, input.Position.Y)
+            dragAbsStart = panel.AbsolutePosition
+            TweenService:Create(titleBar, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(50, 50, 70) }):Play()
+        end
+    end)
+    titleBar.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+            TweenService:Create(titleBar, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(35, 35, 50) }):Play()
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging
+            and (input.UserInputType == Enum.UserInputType.MouseMovement
+                or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = Vector2.new(input.Position.X - dragStart.X, input.Position.Y - dragStart.Y)
+            local newAbsX = dragAbsStart.X + delta.X
+            local newAbsY = dragAbsStart.Y + delta.Y
+            local cam = workspace.CurrentCamera
+            local view = cam and cam.ViewportSize or Vector2.new(800, 600)
+            local panelSize = panel.AbsoluteSize
+            local clampedX = math.clamp(newAbsX, 0, math.max(0, view.X - panelSize.X))
+            local clampedY = math.clamp(newAbsY, 0, math.max(0, view.Y - panelSize.Y))
+            panel.Position = UDim2.new(0, clampedX, 0, clampedY)
+        end
+    end)
 
-	UserInputService.InputChanged:Connect(function(input)
-		if dragging and dragInput
-			and (input.UserInputType == Enum.UserInputType.MouseMovement
-				or input.UserInputType == Enum.UserInputType.Touch) then
-			local delta = Vector2.new(input.Position.X - dragStart.X, input.Position.Y - dragStart.Y)
-
-			-- 用绝对坐标计算新位置, 彻底避免 Scale+Offset 混乱
-			local newAbsX = dragAbsStart.X + delta.X
-			local newAbsY = dragAbsStart.Y + delta.Y
-
-			-- 边界限制: 不能拖到屏幕外
-			local cam = workspace.CurrentCamera
-			local view = cam and cam.ViewportSize or Vector2.new(800, 600)
-			local panelSize = panel.AbsoluteSize
-			local clampedX = math.clamp(newAbsX, 0, math.max(0, view.X - panelSize.X))
-			local clampedY = math.clamp(newAbsY, 0, math.max(0, view.Y - panelSize.Y))
-
-			-- 拖动时直接设置位置 (Scale=0, 纯像素坐标), 不用 tween 避免抖动
-			panel.Position = UDim2.new(0, clampedX, 0, clampedY)
-		end
-	end)
-
-	-- 按钮事件
-	flyBtn.MouseButton1Click:Connect(function()
-		if not flying then
-			startFly()
-		end
-	end)
-
-	stopBtn.MouseButton1Click:Connect(function()
-		if flying then
-			stopFly()
-		end
-	end)
-
-	-- 最小化按钮
-	minBtn.MouseButton1Click:Connect(function()
-		tweenPanel(not collapsed)
-	end)
-
-	print("[FlightController] ✓ UI 已创建, 路径: PlayerGui.FlightUI (可拖动)")
+    -- ===== 按钮事件 =====
+    flyBtn.MouseButton1Click:Connect(function()
+        if not flying then startFly() end
+    end)
+    stopBtn.MouseButton1Click:Connect(function()
+        if flying then stopFly() end
+    end)
+    minBtn.MouseButton1Click:Connect(function()
+        tweenPanel(not collapsed)
+    end)
+    closeBtn.MouseButton1Click:Connect(function()
+        if flying then stopFly() end
+        gui:Destroy()
+    end)
 end)
 
 if not ok then
-	warn("[FlightController] UI 创建失败:", err)
-	return
+    warn("[辞飞行V3] UI 创建失败:", err)
+    return
 end
 
--- 更新按钮视觉状态
-local function updateButtonVisuals()
-	if not flyBtn or not stopBtn then return end
-	if flying then
-		flyBtn.BackgroundColor3 = Color3.fromRGB(80, 200, 100)
-		stopBtn.BackgroundColor3 = Color3.fromRGB(120, 60, 65)
-	else
-		flyBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
-		stopBtn.BackgroundColor3 = Color3.fromRGB(160, 70, 75)
-	end
-end
-
--- 键盘快捷键 F (飞行) / H (收起面板) / R (减速) / T (加速)
+-- ===== 键盘快捷键 (PC端) =====
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	if gameProcessed then return end
-	if input.KeyCode == Enum.KeyCode.F then
-		toggleFly()
-	elseif input.KeyCode == Enum.KeyCode.H then
-		if panel and minBtn then
-			tweenPanel(not collapsed)
-		end
-	elseif input.KeyCode == Enum.KeyCode.R then
-		changeSpeed(flySpeed - FLY_SPEED_STEP)
-	elseif input.KeyCode == Enum.KeyCode.T then
-		changeSpeed(flySpeed + FLY_SPEED_STEP)
-	end
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.F then
+        toggleFly()
+    elseif input.KeyCode == Enum.KeyCode.H then
+        if panel and minBtn then
+            tweenPanel(not collapsed)
+        end
+    elseif input.KeyCode == Enum.KeyCode.R then
+        changeSpeed(flySpeed - FLY_SPEED_STEP)
+    elseif input.KeyCode == Enum.KeyCode.T then
+        changeSpeed(flySpeed + FLY_SPEED_STEP)
+    end
 end)
 
 -- 角色重生时自动停止飞行
-player.CharacterAdded:Connect(function(newChar)
-	print("[FlightController] 角色已重生, 重置飞行状态")
-	if flying then
-		stopFly()
-	end
+player.CharacterAdded:Connect(function()
+    if flying then
+        stopFly()
+    end
 end)
 
-print("[FlightController] ✓✓✓ 飞行系统完全加载! 按 F 或点击按钮切换飞行")
+print("[辞飞行V3] 飞行系统已加载 | 设备:", isTouch and "手机" or "PC", "| R6/R15兼容 | 全游戏通用")
