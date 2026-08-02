@@ -1,0 +1,1090 @@
+--[[
+    辞辞中心 - Roblox 多功能脚本中心
+    功能: 飞行(V3全游戏通用) + 移动速度修改
+    UI: 深色主题 | 分页标签 | 可拖动 | 可收起 | 丝滑动画
+    兼容: R6/R15 | PC键盘 + 手机摇杆/触摸
+    快捷键: F飞行 | H收起 | R减速 | T加速
+
+    使用方法: 将此代码放入执行器或LocalScript中运行
+]]
+
+-- ===== 服务 =====
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local StarterGui = game:GetService("StarterGui")
+
+local player = Players.LocalPlayer
+if not player then return end
+local playerGui = player:WaitForChild("PlayerGui", 10)
+if not playerGui then return end
+local isTouch = UserInputService.TouchEnabled
+
+-- 通知
+pcall(function()
+    StarterGui:SetCore("SendNotification", {
+        Title = "辞辞中心";
+        Text = "注入成功 | 飞行 + 移速";
+        Duration = 5;
+    })
+end)
+
+-- ===== 状态 =====
+-- 飞行
+local flying = false
+local flySpeed = 1
+local FLY_SPEED_DEFAULT = 1
+local FLY_SPEED_MIN = 1
+local FLY_SPEED_MAX = 100
+local FLY_SPEED_STEP = 1
+local tpwalking = false
+local upPressed = false
+local downPressed = false
+local hbConnection = nil
+local bodyGyro = nil
+local bodyVelocity = nil
+
+-- 移动速度
+local walkSpeed = 16
+local WALK_SPEED_DEFAULT = 16
+local WALK_SPEED_MIN = 1
+local WALK_SPEED_MAX = 500
+local WALK_SPEED_STEP = 5
+local walkSpeedLocked = false
+local walkSpeedLockConnection = nil
+
+-- UI 引用
+local gui
+local panel, titleBar, minBtn, closeBtn
+local flightTab, walkTab
+local flightPage, walkPage
+local flyBtn, stopBtn, hintLabel
+local dividerLine, dividerLine2, speedLabel
+local speedDownBtn, speedUpBtn, speedTextBox, speedRow
+local upBtn, downBtn
+local walkSpeedLabel, walkSpeedDownBtn, walkSpeedUpBtn, walkSpeedTextBox, walkSpeedRow
+local presetLabel, presetBtn1, presetBtn2, presetBtn3, presetBtn4
+local lockBtn, resetBtn, walkHintLabel
+local collapsed = false
+local currentTab = "flight"
+
+local panelFullPos = UDim2.new(0, 20, 0.5, -130)
+local panelFullSize = UDim2.new(0, 220, 0, 260)
+local panelMiniSize = UDim2.new(0, 180, 0, 40)
+
+-- 前置声明
+local updateSpeedDisplay, changeSpeed, toggleFly, startFly, stopFly
+local updateWalkSpeedDisplay, changeWalkSpeed, applyWalkSpeed, toggleWalkSpeedLock
+local tweenPanel, switchTab
+
+-- Humanoid 状态 (V3: 禁用后防止物理干扰)
+local humanoidStates = {
+    Enum.HumanoidStateType.Climbing,
+    Enum.HumanoidStateType.FallingDown,
+    Enum.HumanoidStateType.Flying,
+    Enum.HumanoidStateType.Freefall,
+    Enum.HumanoidStateType.GettingUp,
+    Enum.HumanoidStateType.Jumping,
+    Enum.HumanoidStateType.Landed,
+    Enum.HumanoidStateType.Physics,
+    Enum.HumanoidStateType.PlatformStanding,
+    Enum.HumanoidStateType.Ragdoll,
+    Enum.HumanoidStateType.Running,
+    Enum.HumanoidStateType.RunningNoPhysics,
+    Enum.HumanoidStateType.Seated,
+    Enum.HumanoidStateType.StrafingNoPhysics,
+    Enum.HumanoidStateType.Swimming,
+}
+
+-- ===== 飞行逻辑 (V3 全游戏通用) =====
+
+startFly = function()
+    local char = player.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    -- 禁用 Humanoid 状态
+    for _, state in ipairs(humanoidStates) do
+        hum:SetStateEnabled(state, false)
+    end
+    hum:ChangeState(Enum.HumanoidStateType.Swimming)
+
+    -- 禁用动画
+    local animate = char:FindFirstChild("Animate")
+    if animate then animate.Disabled = true end
+    for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
+        track:AdjustSpeed(0)
+    end
+
+    hum.PlatformStand = true
+
+    -- BodyGyro + BodyVelocity (浮空 + 朝向)
+    local isR6 = hum.RigType == Enum.HumanoidRigType.R6
+    local bodyPart = isR6 and char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+    if not bodyPart then bodyPart = root end
+
+    if bodyGyro then bodyGyro:Destroy() end
+    bodyGyro = Instance.new("BodyGyro")
+    bodyGyro.P = 9e4
+    bodyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    bodyGyro.CFrame = bodyPart.CFrame
+    bodyGyro.Parent = bodyPart
+
+    if bodyVelocity then bodyVelocity:Destroy() end
+    bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.Velocity = Vector3.new(0, 0.1, 0)
+    bodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    bodyVelocity.Parent = bodyPart
+
+    -- TranslateBy 移动循环 (V3 核心)
+    tpwalking = true
+    if hbConnection then hbConnection:Disconnect() end
+    hbConnection = RunService.Heartbeat:Connect(function()
+        if not tpwalking then return end
+        local c = player.Character
+        if not c then return end
+        local h = c:FindFirstChildOfClass("Humanoid")
+        if not h then return end
+        local r = c:FindFirstChild("HumanoidRootPart")
+        if not r then return end
+
+        -- 水平: TranslateBy + MoveDirection
+        if h.MoveDirection.Magnitude > 0 then
+            c:TranslateBy(h.MoveDirection * flySpeed)
+        end
+
+        -- 垂直: CFrame (上升/下降)
+        local upDown = 0
+        if upPressed then upDown = upDown + 1 end
+        if downPressed then upDown = upDown - 1 end
+        if not isTouch then
+            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then upDown = upDown + 1 end
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then upDown = upDown - 1 end
+        end
+        if upDown ~= 0 then
+            r.CFrame = r.CFrame * CFrame.new(0, upDown * flySpeed, 0)
+        end
+
+        -- BodyGyro 跟随相机
+        if bodyGyro and bodyGyro.Parent then
+            local cam = workspace.CurrentCamera
+            if cam then bodyGyro.CFrame = cam.CFrame end
+        end
+    end)
+
+    flying = true
+    if upBtn then upBtn.Visible = true end
+    if downBtn then downBtn.Visible = true end
+    if flyBtn then flyBtn.BackgroundColor3 = Color3.fromRGB(80, 200, 100) end
+    if stopBtn then stopBtn.BackgroundColor3 = Color3.fromRGB(120, 60, 65) end
+    updateSpeedDisplay()
+end
+
+stopFly = function()
+    local char = player.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            for _, state in ipairs(humanoidStates) do
+                hum:SetStateEnabled(state, true)
+            end
+            hum:ChangeState(Enum.HumanoidStateType.RunningNoPhysics)
+            hum.PlatformStand = false
+        end
+        local animate = char:FindFirstChild("Animate")
+        if animate then animate.Disabled = false end
+    end
+
+    tpwalking = false
+    if hbConnection then hbConnection:Disconnect() hbConnection = nil end
+    if bodyGyro then bodyGyro:Destroy() bodyGyro = nil end
+    if bodyVelocity then bodyVelocity:Destroy() bodyVelocity = nil end
+
+    flying = false
+    upPressed = false
+    downPressed = false
+    if upBtn then upBtn.Visible = false end
+    if downBtn then downBtn.Visible = false end
+    if flyBtn then flyBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80) end
+    if stopBtn then stopBtn.BackgroundColor3 = Color3.fromRGB(160, 70, 75) end
+    updateSpeedDisplay()
+end
+
+toggleFly = function()
+    if flying then stopFly() else startFly() end
+end
+
+updateSpeedDisplay = function()
+    if not speedTextBox then return end
+    if flying then
+        speedTextBox.Text = tostring(flySpeed)
+    else
+        speedTextBox.Text = "0"
+    end
+end
+
+changeSpeed = function(newSpeed)
+    flySpeed = math.clamp(math.floor(newSpeed), FLY_SPEED_MIN, FLY_SPEED_MAX)
+    updateSpeedDisplay()
+end
+
+-- ===== 移动速度逻辑 =====
+
+applyWalkSpeed = function()
+    local char = player.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.WalkSpeed = walkSpeed
+        end
+    end
+end
+
+updateWalkSpeedDisplay = function()
+    if walkSpeedTextBox then
+        walkSpeedTextBox.Text = tostring(walkSpeed)
+    end
+end
+
+changeWalkSpeed = function(newSpeed)
+    walkSpeed = math.clamp(math.floor(newSpeed), WALK_SPEED_MIN, WALK_SPEED_MAX)
+    applyWalkSpeed()
+    updateWalkSpeedDisplay()
+end
+
+toggleWalkSpeedLock = function()
+    walkSpeedLocked = not walkSpeedLocked
+    if walkSpeedLocked then
+        if walkSpeedLockConnection then walkSpeedLockConnection:Disconnect() end
+        walkSpeedLockConnection = RunService.Heartbeat:Connect(function()
+            applyWalkSpeed()
+        end)
+        if lockBtn then
+            lockBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
+            lockBtn.Text = "已锁定"
+        end
+    else
+        if walkSpeedLockConnection then
+            walkSpeedLockConnection:Disconnect()
+            walkSpeedLockConnection = nil
+        end
+        if lockBtn then
+            lockBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+            lockBtn.Text = "锁定速度"
+        end
+    end
+end
+
+-- ===== UI 辅助 =====
+
+-- 收集所有内容元素 (用于淡入淡出)
+local function getContentElems()
+    local elems = {}
+    local function add(el)
+        if el then table.insert(elems, el) end
+    end
+    -- 标签行
+    add(dividerLine)
+    add(flightTab)
+    add(walkTab)
+    -- 飞行页
+    add(flyBtn)
+    add(stopBtn)
+    add(dividerLine2)
+    add(speedLabel)
+    add(speedDownBtn)
+    add(speedTextBox)
+    add(speedUpBtn)
+    add(hintLabel)
+    -- 移速页
+    add(walkSpeedLabel)
+    add(walkSpeedDownBtn)
+    add(walkSpeedTextBox)
+    add(walkSpeedUpBtn)
+    add(presetLabel)
+    add(presetBtn1)
+    add(presetBtn2)
+    add(presetBtn3)
+    add(presetBtn4)
+    add(lockBtn)
+    add(resetBtn)
+    add(walkHintLabel)
+    return elems
+end
+
+-- 元素淡入/淡出
+local function fadeElement(el, toTransparent, duration)
+    if not el then return end
+    local target = toTransparent and 1 or 0
+    local props = {}
+    if el:IsA("TextLabel") or el:IsA("TextButton") or el:IsA("TextBox") then
+        table.insert(props, { prop = "BackgroundTransparency", target = target })
+        table.insert(props, { prop = "TextTransparency", target = toTransparent and 1 or 0 })
+    elseif el:IsA("Frame") then
+        table.insert(props, { prop = "BackgroundTransparency", target = target })
+    end
+    for _, p in ipairs(props) do
+        TweenService:Create(el, TweenInfo.new(duration), { [p.prop] = p.target }):Play()
+    end
+end
+
+-- 收起/展开面板
+tweenPanel = function(toCollapsed)
+    if not panel or not minBtn then return end
+    collapsed = toCollapsed
+    local targetSize = collapsed and panelMiniSize or panelFullSize
+    local tweenInfo = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+    TweenService:Create(panel, tweenInfo, { Size = targetSize }):Play()
+
+    local elems = getContentElems()
+    if collapsed then
+        for _, el in ipairs(elems) do fadeElement(el, true, 0.2) end
+        task.wait(0.2)
+        for _, el in ipairs(elems) do if el then el.Visible = false end end
+        minBtn.Text = "+"
+    else
+        for _, el in ipairs(elems) do if el then el.Visible = true end end
+        -- 恢复隐藏的页面
+        if flightPage then flightPage.Visible = (currentTab == "flight") end
+        if walkPage then walkPage.Visible = (currentTab == "walk") end
+        -- 非当前页的元素不显示
+        if currentTab == "flight" then
+            if walkSpeedLabel then walkSpeedLabel.Visible = false end
+            if walkSpeedRow then walkSpeedRow.Visible = false end
+            if presetLabel then presetLabel.Visible = false end
+            if presetBtn1 then presetBtn1.Visible = false end
+            if presetBtn2 then presetBtn2.Visible = false end
+            if presetBtn3 then presetBtn3.Visible = false end
+            if presetBtn4 then presetBtn4.Visible = false end
+            if lockBtn then lockBtn.Visible = false end
+            if resetBtn then resetBtn.Visible = false end
+            if walkHintLabel then walkHintLabel.Visible = false end
+        else
+            if flyBtn then flyBtn.Visible = false end
+            if stopBtn then stopBtn.Visible = false end
+            if dividerLine2 then dividerLine2.Visible = false end
+            if speedLabel then speedLabel.Visible = false end
+            if speedRow then speedRow.Visible = false end
+            if hintLabel then hintLabel.Visible = false end
+        end
+        for _, el in ipairs(elems) do
+            if el and el.Visible then fadeElement(el, false, 0.3) end
+        end
+        minBtn.Text = "—"
+    end
+end
+
+-- 切换标签
+switchTab = function(tabName)
+    if tabName == currentTab then return end
+    currentTab = tabName
+
+    if tabName == "flight" then
+        if flightPage then flightPage.Visible = true end
+        if walkPage then walkPage.Visible = false end
+        if flightTab then
+            flightTab.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+            flightTab.TextColor3 = Color3.fromRGB(255, 255, 255)
+        end
+        if walkTab then
+            walkTab.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+            walkTab.TextColor3 = Color3.fromRGB(140, 140, 160)
+        end
+    else
+        if flightPage then flightPage.Visible = false end
+        if walkPage then walkPage.Visible = true end
+        if flightTab then
+            flightTab.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+            flightTab.TextColor3 = Color3.fromRGB(140, 140, 160)
+        end
+        if walkTab then
+            walkTab.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+            walkTab.TextColor3 = Color3.fromRGB(255, 255, 255)
+        end
+    end
+end
+
+-- ===== UI 创建 =====
+local ok, err = pcall(function()
+    -- 删除旧 UI
+    local old = playerGui:FindFirstChild("CiCiHub")
+    if old then old:Destroy() end
+
+    gui = Instance.new("ScreenGui")
+    gui.Name = "CiCiHub"
+    gui.ResetOnSpawn = false
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.IgnoreGuiInset = false
+    gui.DisplayOrder = 10
+    gui.Parent = playerGui
+
+    -- ===== 上升/下降按钮 (飞行时显示) =====
+    upBtn = Instance.new("TextButton")
+    upBtn.Name = "UpBtn"
+    upBtn.Size = UDim2.new(0, 60, 0, 60)
+    upBtn.Position = UDim2.new(1, -80, 0.5, -70)
+    upBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
+    upBtn.Text = "↑"
+    upBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    upBtn.Font = Enum.Font.GothamBold
+    upBtn.TextSize = 32
+    upBtn.AutoButtonColor = true
+    upBtn.Visible = false
+    upBtn.Parent = gui
+    local upCorner = Instance.new("UICorner")
+    upCorner.CornerRadius = UDim.new(0.5, 0)
+    upCorner.Parent = upBtn
+    local upStroke = Instance.new("UIStroke")
+    upStroke.Color = Color3.fromRGB(100, 220, 130)
+    upStroke.Thickness = 2
+    upStroke.Parent = upBtn
+
+    downBtn = Instance.new("TextButton")
+    downBtn.Name = "DownBtn"
+    downBtn.Size = UDim2.new(0, 60, 0, 60)
+    downBtn.Position = UDim2.new(1, -80, 0.5, 10)
+    downBtn.BackgroundColor3 = Color3.fromRGB(160, 70, 75)
+    downBtn.Text = "↓"
+    downBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    downBtn.Font = Enum.Font.GothamBold
+    downBtn.TextSize = 32
+    downBtn.AutoButtonColor = true
+    downBtn.Visible = false
+    downBtn.Parent = gui
+    local downCorner = Instance.new("UICorner")
+    downCorner.CornerRadius = UDim.new(0.5, 0)
+    downCorner.Parent = downBtn
+    local downStroke = Instance.new("UIStroke")
+    downStroke.Color = Color3.fromRGB(220, 100, 105)
+    downStroke.Thickness = 2
+    downStroke.Parent = downBtn
+
+    -- 按住生效
+    upBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            upPressed = true
+        end
+    end)
+    upBtn.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            upPressed = false
+        end
+    end)
+    downBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            downPressed = true
+        end
+    end)
+    downBtn.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            downPressed = false
+        end
+    end)
+
+    -- ===== 主面板 =====
+    panel = Instance.new("Frame")
+    panel.Name = "Panel"
+    panel.Size = panelFullSize
+    panel.Position = panelFullPos
+    panel.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+    panel.BorderSizePixel = 0
+    panel.Active = false
+    panel.Parent = gui
+
+    local panelCorner = Instance.new("UICorner")
+    panelCorner.CornerRadius = UDim.new(0, 12)
+    panelCorner.Parent = panel
+
+    local panelStroke = Instance.new("UIStroke")
+    panelStroke.Color = Color3.fromRGB(80, 80, 100)
+    panelStroke.Thickness = 1.5
+    panelStroke.Transparency = 0.3
+    panelStroke.Parent = panel
+
+    -- ===== 标题栏 =====
+    titleBar = Instance.new("TextButton")
+    titleBar.Name = "TitleBar"
+    titleBar.Size = UDim2.new(1, 0, 0, 38)
+    titleBar.Position = UDim2.new(0, 0, 0, 0)
+    titleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+    titleBar.BorderSizePixel = 0
+    titleBar.Text = ""
+    titleBar.AutoButtonColor = false
+    titleBar.Parent = panel
+
+    local titleCorner = Instance.new("UICorner")
+    titleCorner.CornerRadius = UDim.new(0, 12)
+    titleCorner.Parent = titleBar
+
+    local titleText = Instance.new("TextLabel")
+    titleText.Name = "TitleText"
+    titleText.Size = UDim2.new(1, -80, 1, 0)
+    titleText.Position = UDim2.new(0, 12, 0, 0)
+    titleText.BackgroundTransparency = 1
+    titleText.Text = "辞辞中心"
+    titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    titleText.Font = Enum.Font.GothamBold
+    titleText.TextSize = 16
+    titleText.TextXAlignment = Enum.TextXAlignment.Left
+    titleText.Parent = titleBar
+
+    -- 最小化按钮
+    minBtn = Instance.new("TextButton")
+    minBtn.Name = "MinBtn"
+    minBtn.Size = UDim2.new(0, 28, 0, 28)
+    minBtn.Position = UDim2.new(1, -70, 0, 5)
+    minBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+    minBtn.Text = "—"
+    minBtn.TextColor3 = Color3.fromRGB(200, 200, 220)
+    minBtn.Font = Enum.Font.GothamBold
+    minBtn.TextSize = 16
+    minBtn.AutoButtonColor = true
+    minBtn.Parent = titleBar
+
+    local minCorner = Instance.new("UICorner")
+    minCorner.CornerRadius = UDim.new(0, 6)
+    minCorner.Parent = minBtn
+
+    -- 关闭按钮
+    closeBtn = Instance.new("TextButton")
+    closeBtn.Name = "CloseBtn"
+    closeBtn.Size = UDim2.new(0, 28, 0, 28)
+    closeBtn.Position = UDim2.new(1, -36, 0, 5)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+    closeBtn.Text = "×"
+    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.TextSize = 18
+    closeBtn.AutoButtonColor = true
+    closeBtn.Parent = titleBar
+
+    local closeCorner = Instance.new("UICorner")
+    closeCorner.CornerRadius = UDim.new(0, 6)
+    closeCorner.Parent = closeBtn
+
+    -- ===== 分隔线 (标题下方) =====
+    dividerLine = Instance.new("Frame")
+    dividerLine.Size = UDim2.new(1, -20, 0, 1)
+    dividerLine.Position = UDim2.new(0, 10, 0, 42)
+    dividerLine.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+    dividerLine.BorderSizePixel = 0
+    dividerLine.Parent = panel
+
+    -- ===== 标签行 =====
+    flightTab = Instance.new("TextButton")
+    flightTab.Name = "FlightTab"
+    flightTab.Size = UDim2.new(0.5, -6, 0, 30)
+    flightTab.Position = UDim2.new(0, 10, 0, 46)
+    flightTab.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+    flightTab.BorderSizePixel = 0
+    flightTab.Text = "飞行"
+    flightTab.TextColor3 = Color3.fromRGB(255, 255, 255)
+    flightTab.Font = Enum.Font.GothamBold
+    flightTab.TextSize = 14
+    flightTab.AutoButtonColor = false
+    flightTab.Parent = panel
+
+    local flightTabCorner = Instance.new("UICorner")
+    flightTabCorner.CornerRadius = UDim.new(0, 8)
+    flightTabCorner.Parent = flightTab
+
+    walkTab = Instance.new("TextButton")
+    walkTab.Name = "WalkTab"
+    walkTab.Size = UDim2.new(0.5, -6, 0, 30)
+    walkTab.Position = UDim2.new(0.5, 0, 0, 46)
+    walkTab.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    walkTab.BorderSizePixel = 0
+    walkTab.Text = "移速"
+    walkTab.TextColor3 = Color3.fromRGB(140, 140, 160)
+    walkTab.Font = Enum.Font.GothamBold
+    walkTab.TextSize = 14
+    walkTab.AutoButtonColor = false
+    walkTab.Parent = panel
+
+    local walkTabCorner = Instance.new("UICorner")
+    walkTabCorner.CornerRadius = UDim.new(0, 8)
+    walkTabCorner.Parent = walkTab
+
+    -- ===== 飞行页 (容器) =====
+    flightPage = Instance.new("Frame")
+    flightPage.Name = "FlightPage"
+    flightPage.Size = UDim2.new(1, 0, 1, -84)
+    flightPage.Position = UDim2.new(0, 0, 0, 80)
+    flightPage.BackgroundTransparency = 1
+    flightPage.Parent = panel
+
+    -- 飞行按钮
+    flyBtn = Instance.new("TextButton")
+    flyBtn.Name = "FlyBtn"
+    flyBtn.Size = UDim2.new(1, -20, 0, 38)
+    flyBtn.Position = UDim2.new(0, 10, 0, 4)
+    flyBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
+    flyBtn.Text = "飞行"
+    flyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    flyBtn.Font = Enum.Font.GothamBold
+    flyBtn.TextSize = 16
+    flyBtn.AutoButtonColor = true
+    flyBtn.Parent = flightPage
+
+    local flyCorner = Instance.new("UICorner")
+    flyCorner.CornerRadius = UDim.new(0, 8)
+    flyCorner.Parent = flyBtn
+
+    -- 降落按钮
+    stopBtn = Instance.new("TextButton")
+    stopBtn.Name = "StopBtn"
+    stopBtn.Size = UDim2.new(1, -20, 0, 38)
+    stopBtn.Position = UDim2.new(0, 10, 0, 46)
+    stopBtn.BackgroundColor3 = Color3.fromRGB(160, 70, 75)
+    stopBtn.Text = "降落"
+    stopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    stopBtn.Font = Enum.Font.GothamBold
+    stopBtn.TextSize = 16
+    stopBtn.AutoButtonColor = true
+    stopBtn.Parent = flightPage
+
+    local stopCorner = Instance.new("UICorner")
+    stopCorner.CornerRadius = UDim.new(0, 8)
+    stopCorner.Parent = stopBtn
+
+    -- 分隔线
+    dividerLine2 = Instance.new("Frame")
+    dividerLine2.Name = "Divider2"
+    dividerLine2.Size = UDim2.new(1, -20, 0, 1)
+    dividerLine2.Position = UDim2.new(0, 10, 0, 90)
+    dividerLine2.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+    dividerLine2.BorderSizePixel = 0
+    dividerLine2.Parent = flightPage
+
+    -- 飞行速度标签
+    speedLabel = Instance.new("TextLabel")
+    speedLabel.Name = "SpeedLabel"
+    speedLabel.Size = UDim2.new(1, -20, 0, 20)
+    speedLabel.Position = UDim2.new(0, 10, 0, 95)
+    speedLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    speedLabel.BorderSizePixel = 0
+    speedLabel.Text = "飞行速度"
+    speedLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
+    speedLabel.Font = Enum.Font.GothamMedium
+    speedLabel.TextSize = 12
+    speedLabel.TextXAlignment = Enum.TextXAlignment.Center
+    speedLabel.TextYAlignment = Enum.TextYAlignment.Center
+    speedLabel.Parent = flightPage
+
+    local speedLabelCorner = Instance.new("UICorner")
+    speedLabelCorner.CornerRadius = UDim.new(0, 6)
+    speedLabelCorner.Parent = speedLabel
+
+    -- 速度控制行
+    speedRow = Instance.new("Frame")
+    speedRow.Name = "SpeedRow"
+    speedRow.Size = UDim2.new(1, -20, 0, 32)
+    speedRow.Position = UDim2.new(0, 10, 0, 119)
+    speedRow.BackgroundTransparency = 1
+    speedRow.Parent = flightPage
+
+    speedDownBtn = Instance.new("TextButton")
+    speedDownBtn.Name = "SpeedDown"
+    speedDownBtn.Size = UDim2.new(0, 38, 1, 0)
+    speedDownBtn.Position = UDim2.new(0, 0, 0, 0)
+    speedDownBtn.BackgroundColor3 = Color3.fromRGB(180, 120, 50)
+    speedDownBtn.Text = "-"
+    speedDownBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    speedDownBtn.Font = Enum.Font.GothamBold
+    speedDownBtn.TextSize = 20
+    speedDownBtn.AutoButtonColor = true
+    speedDownBtn.Parent = speedRow
+
+    local spdDownCorner = Instance.new("UICorner")
+    spdDownCorner.CornerRadius = UDim.new(0, 8)
+    spdDownCorner.Parent = speedDownBtn
+
+    speedTextBox = Instance.new("TextBox")
+    speedTextBox.Name = "SpeedInput"
+    speedTextBox.Size = UDim2.new(1, -86, 1, 0)
+    speedTextBox.Position = UDim2.new(0, 42, 0, 0)
+    speedTextBox.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    speedTextBox.Text = "0"
+    speedTextBox.TextColor3 = Color3.fromRGB(255, 220, 100)
+    speedTextBox.Font = Enum.Font.GothamBold
+    speedTextBox.TextSize = 16
+    speedTextBox.PlaceholderText = "1-100"
+    speedTextBox.ClearTextOnFocus = false
+    speedTextBox.Parent = speedRow
+
+    local txtCorner = Instance.new("UICorner")
+    txtCorner.CornerRadius = UDim.new(0, 8)
+    txtCorner.Parent = speedTextBox
+
+    local txtStroke = Instance.new("UIStroke")
+    txtStroke.Color = Color3.fromRGB(80, 80, 100)
+    txtStroke.Thickness = 1
+    txtStroke.Parent = speedTextBox
+
+    speedUpBtn = Instance.new("TextButton")
+    speedUpBtn.Name = "SpeedUp"
+    speedUpBtn.Size = UDim2.new(0, 38, 1, 0)
+    speedUpBtn.Position = UDim2.new(1, -38, 0, 0)
+    speedUpBtn.BackgroundColor3 = Color3.fromRGB(50, 140, 200)
+    speedUpBtn.Text = "+"
+    speedUpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    speedUpBtn.Font = Enum.Font.GothamBold
+    speedUpBtn.TextSize = 20
+    speedUpBtn.AutoButtonColor = true
+    speedUpBtn.Parent = speedRow
+
+    local spdUpCorner = Instance.new("UICorner")
+    spdUpCorner.CornerRadius = UDim.new(0, 8)
+    spdUpCorner.Parent = speedUpBtn
+
+    -- 飞行提示
+    hintLabel = Instance.new("TextLabel")
+    hintLabel.Name = "Hint"
+    hintLabel.Size = UDim2.new(1, -20, 0, 16)
+    hintLabel.Position = UDim2.new(0, 10, 0, 156)
+    hintLabel.BackgroundTransparency = 1
+    if isTouch then
+        hintLabel.Text = "摇杆移动 | ↑↓升降 | H收起"
+    else
+        hintLabel.Text = "F飞行 | WASD | Space/Shift升降 | R/T调速"
+    end
+    hintLabel.TextColor3 = Color3.fromRGB(140, 140, 160)
+    hintLabel.Font = Enum.Font.Gotham
+    hintLabel.TextSize = 10
+    hintLabel.TextXAlignment = Enum.TextXAlignment.Center
+    hintLabel.Parent = flightPage
+
+    -- ===== 移速页 (容器) =====
+    walkPage = Instance.new("Frame")
+    walkPage.Name = "WalkPage"
+    walkPage.Size = UDim2.new(1, 0, 1, -84)
+    walkPage.Position = UDim2.new(0, 0, 0, 80)
+    walkPage.BackgroundTransparency = 1
+    walkPage.Visible = false
+    walkPage.Parent = panel
+
+    -- 移速标签
+    walkSpeedLabel = Instance.new("TextLabel")
+    walkSpeedLabel.Name = "WalkSpeedLabel"
+    walkSpeedLabel.Size = UDim2.new(1, -20, 0, 20)
+    walkSpeedLabel.Position = UDim2.new(0, 10, 0, 4)
+    walkSpeedLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    walkSpeedLabel.BorderSizePixel = 0
+    walkSpeedLabel.Text = "移动速度 (studs/s)"
+    walkSpeedLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
+    walkSpeedLabel.Font = Enum.Font.GothamMedium
+    walkSpeedLabel.TextSize = 12
+    walkSpeedLabel.TextXAlignment = Enum.TextXAlignment.Center
+    walkSpeedLabel.TextYAlignment = Enum.TextYAlignment.Center
+    walkSpeedLabel.Parent = walkPage
+
+    local wsLabelCorner = Instance.new("UICorner")
+    wsLabelCorner.CornerRadius = UDim.new(0, 6)
+    wsLabelCorner.Parent = walkSpeedLabel
+
+    -- 移速控制行
+    walkSpeedRow = Instance.new("Frame")
+    walkSpeedRow.Name = "WalkSpeedRow"
+    walkSpeedRow.Size = UDim2.new(1, -20, 0, 32)
+    walkSpeedRow.Position = UDim2.new(0, 10, 0, 28)
+    walkSpeedRow.BackgroundTransparency = 1
+    walkSpeedRow.Parent = walkPage
+
+    walkSpeedDownBtn = Instance.new("TextButton")
+    walkSpeedDownBtn.Name = "WalkSpeedDown"
+    walkSpeedDownBtn.Size = UDim2.new(0, 38, 1, 0)
+    walkSpeedDownBtn.Position = UDim2.new(0, 0, 0, 0)
+    walkSpeedDownBtn.BackgroundColor3 = Color3.fromRGB(180, 120, 50)
+    walkSpeedDownBtn.Text = "-"
+    walkSpeedDownBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    walkSpeedDownBtn.Font = Enum.Font.GothamBold
+    walkSpeedDownBtn.TextSize = 20
+    walkSpeedDownBtn.AutoButtonColor = true
+    walkSpeedDownBtn.Parent = walkSpeedRow
+
+    local wsDownCorner = Instance.new("UICorner")
+    wsDownCorner.CornerRadius = UDim.new(0, 8)
+    wsDownCorner.Parent = walkSpeedDownBtn
+
+    walkSpeedTextBox = Instance.new("TextBox")
+    walkSpeedTextBox.Name = "WalkSpeedInput"
+    walkSpeedTextBox.Size = UDim2.new(1, -86, 1, 0)
+    walkSpeedTextBox.Position = UDim2.new(0, 42, 0, 0)
+    walkSpeedTextBox.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    walkSpeedTextBox.Text = "16"
+    walkSpeedTextBox.TextColor3 = Color3.fromRGB(100, 220, 255)
+    walkSpeedTextBox.Font = Enum.Font.GothamBold
+    walkSpeedTextBox.TextSize = 16
+    walkSpeedTextBox.PlaceholderText = "1-500"
+    walkSpeedTextBox.ClearTextOnFocus = false
+    walkSpeedTextBox.Parent = walkSpeedRow
+
+    local wsTxtCorner = Instance.new("UICorner")
+    wsTxtCorner.CornerRadius = UDim.new(0, 8)
+    wsTxtCorner.Parent = walkSpeedTextBox
+
+    local wsTxtStroke = Instance.new("UIStroke")
+    wsTxtStroke.Color = Color3.fromRGB(80, 80, 100)
+    wsTxtStroke.Thickness = 1
+    wsTxtStroke.Parent = walkSpeedTextBox
+
+    walkSpeedUpBtn = Instance.new("TextButton")
+    walkSpeedUpBtn.Name = "WalkSpeedUp"
+    walkSpeedUpBtn.Size = UDim2.new(0, 38, 1, 0)
+    walkSpeedUpBtn.Position = UDim2.new(1, -38, 0, 0)
+    walkSpeedUpBtn.BackgroundColor3 = Color3.fromRGB(50, 140, 200)
+    walkSpeedUpBtn.Text = "+"
+    walkSpeedUpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    walkSpeedUpBtn.Font = Enum.Font.GothamBold
+    walkSpeedUpBtn.TextSize = 20
+    walkSpeedUpBtn.AutoButtonColor = true
+    walkSpeedUpBtn.Parent = walkSpeedRow
+
+    local wsUpCorner = Instance.new("UICorner")
+    wsUpCorner.CornerRadius = UDim.new(0, 8)
+    wsUpCorner.Parent = walkSpeedUpBtn
+
+    -- 快速设置标签
+    presetLabel = Instance.new("TextLabel")
+    presetLabel.Name = "PresetLabel"
+    presetLabel.Size = UDim2.new(1, -20, 0, 18)
+    presetLabel.Position = UDim2.new(0, 10, 0, 66)
+    presetLabel.BackgroundTransparency = 1
+    presetLabel.Text = "快速设置"
+    presetLabel.TextColor3 = Color3.fromRGB(140, 140, 160)
+    presetLabel.Font = Enum.Font.GothamMedium
+    presetLabel.TextSize = 11
+    presetLabel.TextXAlignment = Enum.TextXAlignment.Left
+    presetLabel.Parent = walkPage
+
+    -- 预设按钮行
+    local presetRow = Instance.new("Frame")
+    presetRow.Name = "PresetRow"
+    presetRow.Size = UDim2.new(1, -20, 0, 28)
+    presetRow.Position = UDim2.new(0, 10, 0, 86)
+    presetRow.BackgroundTransparency = 1
+    presetRow.Parent = walkPage
+
+    local presetValues = { 16, 50, 100, 200 }
+    local presetBtns = {}
+    for i, val in ipairs(presetValues) do
+        local btn = Instance.new("TextButton")
+        btn.Name = "Preset" .. val
+        btn.Size = UDim2.new(0, 44, 1, 0)
+        btn.Position = UDim2.new(0, (i - 1) * 50, 0, 0)
+        btn.BackgroundColor3 = Color3.fromRGB(55, 55, 75)
+        btn.Text = tostring(val)
+        btn.TextColor3 = Color3.fromRGB(200, 200, 220)
+        btn.Font = Enum.Font.GothamBold
+        btn.TextSize = 13
+        btn.AutoButtonColor = true
+        btn.Parent = presetRow
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = btn
+
+        btn.MouseButton1Click:Connect(function()
+            changeWalkSpeed(val)
+        end)
+
+        presetBtns[i] = btn
+    end
+    presetBtn1 = presetBtns[1]
+    presetBtn2 = presetBtns[2]
+    presetBtn3 = presetBtns[3]
+    presetBtn4 = presetBtns[4]
+
+    -- 锁定 + 恢复行
+    local actionRow = Instance.new("Frame")
+    actionRow.Name = "ActionRow"
+    actionRow.Size = UDim2.new(1, -20, 0, 28)
+    actionRow.Position = UDim2.new(0, 10, 0, 120)
+    actionRow.BackgroundTransparency = 1
+    actionRow.Parent = walkPage
+
+    lockBtn = Instance.new("TextButton")
+    lockBtn.Name = "LockBtn"
+    lockBtn.Size = UDim2.new(0.5, -5, 1, 0)
+    lockBtn.Position = UDim2.new(0, 0, 0, 0)
+    lockBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+    lockBtn.Text = "锁定速度"
+    lockBtn.TextColor3 = Color3.fromRGB(200, 200, 220)
+    lockBtn.Font = Enum.Font.GothamBold
+    lockBtn.TextSize = 13
+    lockBtn.AutoButtonColor = true
+    lockBtn.Parent = actionRow
+
+    local lockCorner = Instance.new("UICorner")
+    lockCorner.CornerRadius = UDim.new(0, 6)
+    lockCorner.Parent = lockBtn
+
+    resetBtn = Instance.new("TextButton")
+    resetBtn.Name = "ResetBtn"
+    resetBtn.Size = UDim2.new(0.5, -5, 1, 0)
+    resetBtn.Position = UDim2.new(0.5, 5, 0, 0)
+    resetBtn.BackgroundColor3 = Color3.fromRGB(80, 60, 60)
+    resetBtn.Text = "恢复默认"
+    resetBtn.TextColor3 = Color3.fromRGB(200, 200, 220)
+    resetBtn.Font = Enum.Font.GothamBold
+    resetBtn.TextSize = 13
+    resetBtn.AutoButtonColor = true
+    resetBtn.Parent = actionRow
+
+    local resetCorner = Instance.new("UICorner")
+    resetCorner.CornerRadius = UDim.new(0, 6)
+    resetCorner.Parent = resetBtn
+
+    -- 移速提示
+    walkHintLabel = Instance.new("TextLabel")
+    walkHintLabel.Name = "WalkHint"
+    walkHintLabel.Size = UDim2.new(1, -20, 0, 16)
+    walkHintLabel.Position = UDim2.new(0, 10, 0, 156)
+    walkHintLabel.BackgroundTransparency = 1
+    walkHintLabel.Text = "默认16 | 死亡后自动恢复"
+    walkHintLabel.TextColor3 = Color3.fromRGB(140, 140, 160)
+    walkHintLabel.Font = Enum.Font.Gotham
+    walkHintLabel.TextSize = 10
+    walkHintLabel.TextXAlignment = Enum.TextXAlignment.Center
+    walkHintLabel.Parent = walkPage
+
+    -- 初始化显示
+    updateSpeedDisplay()
+    updateWalkSpeedDisplay()
+
+    -- ===== 事件绑定 =====
+
+    -- 飞行速度按钮
+    speedDownBtn.MouseButton1Click:Connect(function()
+        changeSpeed(flySpeed - FLY_SPEED_STEP)
+    end)
+    speedUpBtn.MouseButton1Click:Connect(function()
+        changeSpeed(flySpeed + FLY_SPEED_STEP)
+    end)
+    speedTextBox.FocusLost:Connect(function()
+        local num = tonumber(speedTextBox.Text)
+        if num then changeSpeed(num) else updateSpeedDisplay() end
+    end)
+
+    -- 移速按钮
+    walkSpeedDownBtn.MouseButton1Click:Connect(function()
+        changeWalkSpeed(walkSpeed - WALK_SPEED_STEP)
+    end)
+    walkSpeedUpBtn.MouseButton1Click:Connect(function()
+        changeWalkSpeed(walkSpeed + WALK_SPEED_STEP)
+    end)
+    walkSpeedTextBox.FocusLost:Connect(function()
+        local num = tonumber(walkSpeedTextBox.Text)
+        if num then changeWalkSpeed(num) else updateWalkSpeedDisplay() end
+    end)
+
+    -- 锁定/恢复
+    lockBtn.MouseButton1Click:Connect(function()
+        toggleWalkSpeedLock()
+    end)
+    resetBtn.MouseButton1Click:Connect(function()
+        changeWalkSpeed(WALK_SPEED_DEFAULT)
+        if walkSpeedLocked then toggleWalkSpeedLock() end
+    end)
+
+    -- 飞行/降落
+    flyBtn.MouseButton1Click:Connect(function()
+        if not flying then startFly() end
+    end)
+    stopBtn.MouseButton1Click:Connect(function()
+        if flying then stopFly() end
+    end)
+
+    -- 标签切换
+    flightTab.MouseButton1Click:Connect(function()
+        switchTab("flight")
+    end)
+    walkTab.MouseButton1Click:Connect(function()
+        switchTab("walk")
+    end)
+
+    -- 最小化/关闭
+    minBtn.MouseButton1Click:Connect(function()
+        tweenPanel(not collapsed)
+    end)
+    closeBtn.MouseButton1Click:Connect(function()
+        if flying then stopFly() end
+        if walkSpeedLocked then toggleWalkSpeedLock() end
+        gui:Destroy()
+    end)
+
+    -- ===== 拖动逻辑 (AbsolutePosition, 不会消失) =====
+    local dragging = false
+    local dragStart = Vector2.zero
+    local dragAbsStart = Vector2.zero
+
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = Vector2.new(input.Position.X, input.Position.Y)
+            dragAbsStart = panel.AbsolutePosition
+            TweenService:Create(titleBar, TweenInfo.new(0.15), { BackgroundColor3 = Color3.fromRGB(50, 50, 70) }):Play()
+        end
+    end)
+    titleBar.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+            TweenService:Create(titleBar, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(35, 35, 50) }):Play()
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging
+            and (input.UserInputType == Enum.UserInputType.MouseMovement
+                or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = Vector2.new(input.Position.X - dragStart.X, input.Position.Y - dragStart.Y)
+            local newAbsX = dragAbsStart.X + delta.X
+            local newAbsY = dragAbsStart.Y + delta.Y
+            local cam = workspace.CurrentCamera
+            local view = cam and cam.ViewportSize or Vector2.new(800, 600)
+            local panelSize = panel.AbsoluteSize
+            local clampedX = math.clamp(newAbsX, 0, math.max(0, view.X - panelSize.X))
+            local clampedY = math.clamp(newAbsY, 0, math.max(0, view.Y - panelSize.Y))
+            panel.Position = UDim2.new(0, clampedX, 0, clampedY)
+        end
+    end)
+end)
+
+if not ok then
+    warn("[辞辞中心] UI 创建失败:", err)
+    return
+end
+
+-- ===== 键盘快捷键 (PC) =====
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.F then
+        toggleFly()
+    elseif input.KeyCode == Enum.KeyCode.H then
+        if panel and minBtn then
+            tweenPanel(not collapsed)
+        end
+    elseif input.KeyCode == Enum.KeyCode.R then
+        changeSpeed(flySpeed - FLY_SPEED_STEP)
+    elseif input.KeyCode == Enum.KeyCode.T then
+        changeSpeed(flySpeed + FLY_SPEED_STEP)
+    end
+end)
+
+-- ===== 角色重生 =====
+player.CharacterAdded:Connect(function()
+    if flying then stopFly() end
+    task.wait(0.5)
+    applyWalkSpeed()
+end)
+
+print("[辞辞中心] 已加载 | 设备:", isTouch and "手机" or "PC", "| 飞行 + 移速 | R6/R15兼容")
