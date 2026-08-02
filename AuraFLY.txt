@@ -26,7 +26,7 @@ local isTouch = UserInputService.TouchEnabled
 -- 通知
 pcall(function()
     StarterGui:SetCore("SendNotification", {
-        Title = "辞飞行 V3";
+        Title = "辞飞行";
         Text = "全游戏通用 | 注入成功";
         Duration = 5;
     })
@@ -403,7 +403,7 @@ local ok, err = pcall(function()
     titleText.Size = UDim2.new(1, -80, 1, 0)
     titleText.Position = UDim2.new(0, 12, 0, 0)
     titleText.BackgroundTransparency = 1
-    titleText.Text = "辞飞行 V3"
+    titleText.Text = "辞飞行V2"
     titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
     titleText.Font = Enum.Font.GothamBold
     titleText.TextSize = 16
