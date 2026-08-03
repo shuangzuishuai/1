@@ -1,6 +1,6 @@
 --[[
     辞辞中心 - Roblox 多功能脚本中心
-    功能: 飞行(V3全游戏通用) + 移动速度修改
+    功能: 飞行(V3全游戏通用) + 移动速度修改 + 玩家透视(ESP)
     UI: 深色主题 | 分页标签 | 可拖动 | 可收起 | 丝滑动画
     兼容: R6/R15 | PC键盘 + 手机摇杆/触摸
     快捷键: F飞行 | H收起 | R减速 | T加速
@@ -14,6 +14,7 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local StarterGui = game:GetService("StarterGui")
+local Teams = game:GetService("Teams")
 
 local player = Players.LocalPlayer
 if not player then return end
@@ -25,7 +26,7 @@ local isTouch = UserInputService.TouchEnabled
 pcall(function()
     StarterGui:SetCore("SendNotification", {
         Title = "辞辞中心";
-        Text = "注入成功 | 飞行 + 移速";
+        Text = "注入成功 | 飞行 + 移速 + 透视";
         Duration = 5;
     })
 end)
@@ -54,11 +55,22 @@ local WALK_SPEED_STEP = 5
 local walkSpeedLocked = false
 local walkSpeedLockConnection = nil
 
+-- 透视 (ESP)
+local espEnabled = false
+local espShowName = true
+local espShowHealth = true
+local espShowBox = false
+local espShowDistance = true
+local espIgnoreTeam = false
+local espHighlightMode = true
+local espObjects = {}
+local espConnection = nil
+
 -- UI 引用
-local gui
+local gui, espGui
 local panel, titleBar, minBtn, closeBtn
-local flightTab, walkTab
-local flightPage, walkPage
+local flightTab, walkTab, espTab
+local flightPage, walkPage, espPage
 local flyBtn, stopBtn, hintLabel
 local dividerLine, dividerLine2, speedLabel
 local speedDownBtn, speedUpBtn, speedTextBox, speedRow
@@ -66,16 +78,18 @@ local upBtn, downBtn
 local walkSpeedLabel, walkSpeedDownBtn, walkSpeedUpBtn, walkSpeedTextBox, walkSpeedRow
 local presetLabel, presetBtn1, presetBtn2, presetBtn3, presetBtn4
 local lockBtn, resetBtn, walkHintLabel
+local espToggleBtn, espNameBtn, espHealthBtn, espBoxBtn, espDistanceBtn, espTeamBtn, espHighlightBtn, espHintLabel
 local collapsed = false
 local currentTab = "flight"
 
-local panelFullPos = UDim2.new(0, 20, 0.5, -130)
-local panelFullSize = UDim2.new(0, 220, 0, 260)
+local panelFullPos = UDim2.new(0, 20, 0.5, -145)
+local panelFullSize = UDim2.new(0, 220, 0, 290)
 local panelMiniSize = UDim2.new(0, 180, 0, 40)
 
 -- 前置声明
 local updateSpeedDisplay, changeSpeed, toggleFly, startFly, stopFly
 local updateWalkSpeedDisplay, changeWalkSpeed, applyWalkSpeed, toggleWalkSpeedLock
+local toggleESP, setESPOption, createESPForPlayer, removeESPForPlayer, clearAllESP
 local tweenPanel, switchTab
 
 -- Humanoid 状态 (V3: 禁用后防止物理干扰)
@@ -107,13 +121,11 @@ startFly = function()
     local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return end
 
-    -- 禁用 Humanoid 状态
     for _, state in ipairs(humanoidStates) do
         hum:SetStateEnabled(state, false)
     end
     hum:ChangeState(Enum.HumanoidStateType.Swimming)
 
-    -- 禁用动画
     local animate = char:FindFirstChild("Animate")
     if animate then animate.Disabled = true end
     for _, track in ipairs(hum:GetPlayingAnimationTracks()) do
@@ -122,7 +134,6 @@ startFly = function()
 
     hum.PlatformStand = true
 
-    -- BodyGyro + BodyVelocity (浮空 + 朝向)
     local isR6 = hum.RigType == Enum.HumanoidRigType.R6
     local bodyPart = isR6 and char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
     if not bodyPart then bodyPart = root end
@@ -140,7 +151,6 @@ startFly = function()
     bodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
     bodyVelocity.Parent = bodyPart
 
-    -- TranslateBy 移动循环 (V3 核心)
     tpwalking = true
     if hbConnection then hbConnection:Disconnect() end
     hbConnection = RunService.Heartbeat:Connect(function()
@@ -152,12 +162,10 @@ startFly = function()
         local r = c:FindFirstChild("HumanoidRootPart")
         if not r then return end
 
-        -- 水平: TranslateBy + MoveDirection
         if h.MoveDirection.Magnitude > 0 then
             c:TranslateBy(h.MoveDirection * flySpeed)
         end
 
-        -- 垂直: CFrame (上升/下降)
         local upDown = 0
         if upPressed then upDown = upDown + 1 end
         if downPressed then upDown = upDown - 1 end
@@ -169,7 +177,6 @@ startFly = function()
             r.CFrame = r.CFrame * CFrame.new(0, upDown * flySpeed, 0)
         end
 
-        -- BodyGyro 跟随相机
         if bodyGyro and bodyGyro.Parent then
             local cam = workspace.CurrentCamera
             if cam then bodyGyro.CFrame = cam.CFrame end
@@ -279,44 +286,317 @@ toggleWalkSpeedLock = function()
     end
 end
 
--- ===== UI 辅助 =====
+-- ===== 透视逻辑 (ESP) =====
 
--- 收集所有内容元素 (用于淡入淡出)
-local function getContentElems()
-    local elems = {}
-    local function add(el)
-        if el then table.insert(elems, el) end
-    end
-    -- 标签行
-    add(dividerLine)
-    add(flightTab)
-    add(walkTab)
-    -- 飞行页
-    add(flyBtn)
-    add(stopBtn)
-    add(dividerLine2)
-    add(speedLabel)
-    add(speedDownBtn)
-    add(speedTextBox)
-    add(speedUpBtn)
-    add(hintLabel)
-    -- 移速页
-    add(walkSpeedLabel)
-    add(walkSpeedDownBtn)
-    add(walkSpeedTextBox)
-    add(walkSpeedUpBtn)
-    add(presetLabel)
-    add(presetBtn1)
-    add(presetBtn2)
-    add(presetBtn3)
-    add(presetBtn4)
-    add(lockBtn)
-    add(resetBtn)
-    add(walkHintLabel)
-    return elems
+createESPForPlayer = function(p)
+    if p == player then return end
+    if espObjects[p] then return end
+    if not espGui then return end
+
+    local esp = {}
+
+    -- 方框
+    esp.box = Instance.new("Frame")
+    esp.box.Name = "ESPBox_" .. p.Name
+    esp.box.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    esp.box.BackgroundTransparency = 1
+    esp.box.BorderSizePixel = 0
+    esp.box.Visible = false
+    esp.box.ZIndex = 5
+    esp.box.Parent = espGui
+
+    local boxStroke = Instance.new("UIStroke")
+    boxStroke.Color = Color3.fromRGB(0, 200, 255)
+    boxStroke.Thickness = 1.5
+    boxStroke.Parent = esp.box
+
+    -- 名字标签
+    esp.name = Instance.new("TextLabel")
+    esp.name.Name = "ESPName_" .. p.Name
+    esp.name.BackgroundTransparency = 1
+    esp.name.Font = Enum.Font.GothamBold
+    esp.name.TextSize = 12
+    esp.name.TextColor3 = Color3.fromRGB(255, 255, 255)
+    esp.name.TextStrokeTransparency = 0.3
+    esp.name.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    esp.name.TextXAlignment = Enum.TextXAlignment.Center
+    esp.name.Visible = false
+    esp.name.ZIndex = 5
+    esp.name.Parent = espGui
+
+    -- 血条背景
+    esp.healthBg = Instance.new("Frame")
+    esp.healthBg.Name = "ESPHealthBg_" .. p.Name
+    esp.healthBg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    esp.healthBg.BackgroundTransparency = 0.4
+    esp.healthBg.BorderSizePixel = 0
+    esp.healthBg.Visible = false
+    esp.healthBg.ZIndex = 5
+    esp.healthBg.Parent = espGui
+
+    local healthBgCorner = Instance.new("UICorner")
+    healthBgCorner.CornerRadius = UDim.new(0, 2)
+    healthBgCorner.Parent = esp.healthBg
+
+    -- 血条填充
+    esp.healthFill = Instance.new("Frame")
+    esp.healthFill.Name = "ESPHealthFill_" .. p.Name
+    esp.healthFill.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+    esp.healthFill.BorderSizePixel = 0
+    esp.healthFill.ZIndex = 6
+    esp.healthFill.Parent = esp.healthBg
+
+    local healthFillCorner = Instance.new("UICorner")
+    healthFillCorner.CornerRadius = UDim.new(0, 2)
+    healthFillCorner.Parent = esp.healthFill
+
+    -- 血量文字
+    esp.healthText = Instance.new("TextLabel")
+    esp.healthText.Name = "ESPHealthText_" .. p.Name
+    esp.healthText.BackgroundTransparency = 1
+    esp.healthText.Font = Enum.Font.GothamBold
+    esp.healthText.TextSize = 10
+    esp.healthText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    esp.healthText.TextStrokeTransparency = 0.3
+    esp.healthText.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    esp.healthText.TextXAlignment = Enum.TextXAlignment.Center
+    esp.healthText.Visible = false
+    esp.healthText.ZIndex = 5
+    esp.healthText.Parent = espGui
+
+    -- 高亮模式：Highlight（3D 高亮，穿墙可见）
+    esp.highlight = Instance.new("Highlight")
+    esp.highlight.Name = "CiCiHighlight_" .. p.Name
+    esp.highlight.Enabled = false
+    esp.highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    esp.highlight.FillColor = Color3.fromRGB(0, 200, 255)
+    esp.highlight.FillTransparency = 0.5
+    esp.highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    esp.highlight.OutlineTransparency = 0
+    esp.highlight.Parent = espGui
+
+    -- 高亮模式：BillboardGui（头顶文字标签）
+    esp.billboard = Instance.new("BillboardGui")
+    esp.billboard.Name = "CiCiBillboard_" .. p.Name
+    esp.billboard.Enabled = false
+    esp.billboard.AlwaysOnTop = true
+    esp.billboard.ExtentsOffset = Vector3.new(0, 1, 0)
+    esp.billboard.Size = UDim2.new(0, 200, 0, 30)
+
+    esp.billboardText = Instance.new("TextLabel")
+    esp.billboardText.BackgroundTransparency = 1
+    esp.billboardText.Size = UDim2.new(1, 0, 1, 0)
+    esp.billboardText.Font = Enum.Font.GothamBold
+    esp.billboardText.TextSize = 14
+    esp.billboardText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    esp.billboardText.TextStrokeTransparency = 0.3
+    esp.billboardText.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    esp.billboardText.TextXAlignment = Enum.TextXAlignment.Center
+    esp.billboardText.Parent = esp.billboard
+    esp.billboard.Parent = espGui
+
+    espObjects[p] = esp
 end
 
--- 元素淡入/淡出
+removeESPForPlayer = function(p)
+    local esp = espObjects[p]
+    if esp then
+        if esp.box then esp.box:Destroy() end
+        if esp.name then esp.name:Destroy() end
+        if esp.healthBg then esp.healthBg:Destroy() end
+        if esp.healthText then esp.healthText:Destroy() end
+        if esp.highlight then esp.highlight:Destroy() end
+        if esp.billboard then esp.billboard:Destroy() end
+        espObjects[p] = nil
+    end
+end
+
+clearAllESP = function()
+    for p, _ in pairs(espObjects) do
+        removeESPForPlayer(p)
+    end
+end
+
+local function hideESPObject(esp)
+    if not esp then return end
+    if esp.box then esp.box.Visible = false end
+    if esp.name then esp.name.Visible = false end
+    if esp.healthBg then esp.healthBg.Visible = false end
+    if esp.healthText then esp.healthText.Visible = false end
+    if esp.highlight then esp.highlight.Enabled = false end
+    if esp.billboard then esp.billboard.Enabled = false end
+end
+
+toggleESP = function()
+    espEnabled = not espEnabled
+    if espEnabled then
+        for _, p in ipairs(Players:GetPlayers()) do
+            createESPForPlayer(p)
+        end
+        if espConnection then espConnection:Disconnect() end
+        espConnection = RunService.RenderStepped:Connect(function()
+            if not espEnabled then return end
+            local cam = workspace.CurrentCamera
+            if not cam then return end
+
+            for p, esp in pairs(espObjects) do
+                local char = p.Character
+                if not char then
+                    hideESPObject(esp)
+                    continue
+                end
+
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                local root = char:FindFirstChild("HumanoidRootPart")
+                local head = char:FindFirstChild("Head")
+
+                if not hum or not root or not head then
+                    hideESPObject(esp)
+                    continue
+                end
+
+                -- 队友过滤
+                if espIgnoreTeam and p.Team and player.Team and p.Team == player.Team then
+                    hideESPObject(esp)
+                    continue
+                end
+
+                local distance = (root.Position - cam.CFrame.Position).Magnitude
+                local hp = math.clamp(hum.Health, 0, hum.MaxHealth)
+                local maxHp = hum.MaxHealth
+                if maxHp <= 0 then maxHp = 100 end
+                local hpRatio = hp / maxHp
+
+                if espHighlightMode then
+                    -- 高亮模式：直接绑定 3D 角色，不用屏幕坐标，所以远近都不会下坠错位
+                    if esp.box then esp.box.Visible = false end
+                    if esp.name then esp.name.Visible = false end
+                    if esp.healthBg then esp.healthBg.Visible = false end
+                    if esp.healthText then esp.healthText.Visible = false end
+
+                    if esp.highlight then
+                        esp.highlight.Adornee = char
+                        esp.highlight.Enabled = true
+                        esp.highlight.FillColor = p.TeamColor and p.TeamColor.Color or Color3.fromRGB(0, 200, 255)
+                    end
+
+                    if esp.billboard then
+                        esp.billboard.Adornee = head
+                        esp.billboard.Enabled = espShowName or espShowHealth or espShowDistance
+                        local bbText = espShowName and (p.DisplayName or p.Name) or ""
+                        if espShowDistance then
+                            if bbText ~= "" then bbText = bbText .. " " end
+                            bbText = bbText .. "[" .. math.floor(distance) .. "m]"
+                        end
+                        if espShowHealth then
+                            if bbText ~= "" then bbText = bbText .. " | " end
+                            bbText = bbText .. "HP: " .. math.floor(hp) .. "/" .. math.floor(maxHp)
+                        end
+                        if esp.billboardText then
+                            esp.billboardText.Text = bbText
+                        end
+                    end
+                else
+                    -- 旧 2D 方框模式：仅作为备用。默认关闭，避免远距离投影错位。
+                    if esp.highlight then esp.highlight.Enabled = false end
+                    if esp.billboard then esp.billboard.Enabled = false end
+
+                    local rootPos, onScreen = cam:WorldToViewportPoint(root.Position)
+                    if not onScreen then
+                        hideESPObject(esp)
+                        continue
+                    end
+
+                    local headPos2D = cam:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
+                    local legPos2D = cam:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0))
+                    local boxY = math.min(headPos2D.Y, legPos2D.Y)
+                    local boxHeight = math.clamp(math.abs(legPos2D.Y - headPos2D.Y), 30, 500)
+                    local boxWidth = boxHeight * 0.55
+                    local boxX = headPos2D.X - boxWidth / 2
+
+                    esp.box.Position = UDim2.new(0, boxX, 0, boxY)
+                    esp.box.Size = UDim2.new(0, boxWidth, 0, boxHeight)
+                    esp.box.Visible = espShowBox
+
+                    local nameText = p.DisplayName or p.Name
+                    if espShowDistance then
+                        nameText = nameText .. " [" .. math.floor(distance) .. "m]"
+                    end
+                    esp.name.Text = nameText
+                    esp.name.Position = UDim2.new(0, boxX - 10, 0, boxY - 16)
+                    esp.name.Size = UDim2.new(0, boxWidth + 20, 0, 14)
+                    esp.name.Visible = espShowName
+
+                    esp.healthBg.Position = UDim2.new(0, boxX - 6, 0, boxY)
+                    esp.healthBg.Size = UDim2.new(0, 3, 0, boxHeight)
+                    esp.healthBg.Visible = espShowHealth
+
+                    esp.healthFill.Size = UDim2.new(1, 0, hpRatio, 0)
+                    esp.healthFill.Position = UDim2.new(0, 0, 1 - hpRatio, 0)
+                    local r = math.floor(50 + 200 * (1 - hpRatio))
+                    local g = math.floor(50 + 200 * hpRatio)
+                    esp.healthFill.BackgroundColor3 = Color3.fromRGB(r, g, 0)
+
+                    esp.healthText.Text = math.floor(hp) .. "/" .. math.floor(maxHp)
+                    esp.healthText.Position = UDim2.new(0, boxX, 0, boxY + boxHeight + 2)
+                    esp.healthText.Size = UDim2.new(0, boxWidth, 0, 12)
+                    esp.healthText.Visible = espShowHealth
+                end
+            end
+        end)
+
+        if espToggleBtn then
+            espToggleBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
+            espToggleBtn.Text = "关闭透视"
+        end
+        if espHintLabel then
+            espHintLabel.Text = "透视已开启 | 高亮绑定角色，远近不偏移"
+        end
+    else
+        if espConnection then
+            espConnection:Disconnect()
+            espConnection = nil
+        end
+        for _, esp in pairs(espObjects) do
+            hideESPObject(esp)
+        end
+
+        if espToggleBtn then
+            espToggleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+            espToggleBtn.Text = "开启透视"
+        end
+        if espHintLabel then
+            espHintLabel.Text = "默认高亮跟随模式，远距离不下坠"
+        end
+    end
+end
+
+setESPOption = function(option)
+    if option == "name" then
+        espShowName = not espShowName
+        return espShowName
+    elseif option == "health" then
+        espShowHealth = not espShowHealth
+        return espShowHealth
+    elseif option == "box" then
+        espShowBox = not espShowBox
+        return espShowBox
+    elseif option == "distance" then
+        espShowDistance = not espShowDistance
+        return espShowDistance
+    elseif option == "team" then
+        espIgnoreTeam = not espIgnoreTeam
+        return espIgnoreTeam
+    elseif option == "highlight" then
+        espHighlightMode = not espHighlightMode
+        return espHighlightMode
+    end
+    return false
+end
+
+-- ===== UI 辅助 =====
+
+
 local function fadeElement(el, toTransparent, duration)
     if not el then return end
     local target = toTransparent and 1 or 0
@@ -332,7 +612,8 @@ local function fadeElement(el, toTransparent, duration)
     end
 end
 
--- 收起/展开面板
+
+-- 收起/展开面板（简化：只控制共享元素和页面容器的可见性）
 tweenPanel = function(toCollapsed)
     if not panel or not minBtn then return end
     collapsed = toCollapsed
@@ -340,40 +621,36 @@ tweenPanel = function(toCollapsed)
     local tweenInfo = TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
     TweenService:Create(panel, tweenInfo, { Size = targetSize }):Play()
 
-    local elems = getContentElems()
     if collapsed then
-        for _, el in ipairs(elems) do fadeElement(el, true, 0.2) end
+        -- 收起：淡出标签栏和所有页面
+        if dividerLine then fadeElement(dividerLine, true, 0.2) end
+        if flightTab then fadeElement(flightTab, true, 0.2) end
+        if walkTab then fadeElement(walkTab, true, 0.2) end
+        if espTab then fadeElement(espTab, true, 0.2) end
+        if flightPage then flightPage.Visible = false end
+        if walkPage then walkPage.Visible = false end
+        if espPage then espPage.Visible = false end
         task.wait(0.2)
-        for _, el in ipairs(elems) do if el then el.Visible = false end end
+        if dividerLine then dividerLine.Visible = false end
+        if flightTab then flightTab.Visible = false end
+        if walkTab then walkTab.Visible = false end
+        if espTab then espTab.Visible = false end
         minBtn.Text = "+"
     else
-        for _, el in ipairs(elems) do if el then el.Visible = true end end
-        -- 恢复隐藏的页面
+        -- 展开：显示标签栏 + 当前页
+        if dividerLine then dividerLine.Visible = true end
+        if flightTab then flightTab.Visible = true end
+        if walkTab then walkTab.Visible = true end
+        if espTab then espTab.Visible = true end
+        -- 只显示当前页
         if flightPage then flightPage.Visible = (currentTab == "flight") end
         if walkPage then walkPage.Visible = (currentTab == "walk") end
-        -- 非当前页的元素不显示
-        if currentTab == "flight" then
-            if walkSpeedLabel then walkSpeedLabel.Visible = false end
-            if walkSpeedRow then walkSpeedRow.Visible = false end
-            if presetLabel then presetLabel.Visible = false end
-            if presetBtn1 then presetBtn1.Visible = false end
-            if presetBtn2 then presetBtn2.Visible = false end
-            if presetBtn3 then presetBtn3.Visible = false end
-            if presetBtn4 then presetBtn4.Visible = false end
-            if lockBtn then lockBtn.Visible = false end
-            if resetBtn then resetBtn.Visible = false end
-            if walkHintLabel then walkHintLabel.Visible = false end
-        else
-            if flyBtn then flyBtn.Visible = false end
-            if stopBtn then stopBtn.Visible = false end
-            if dividerLine2 then dividerLine2.Visible = false end
-            if speedLabel then speedLabel.Visible = false end
-            if speedRow then speedRow.Visible = false end
-            if hintLabel then hintLabel.Visible = false end
-        end
-        for _, el in ipairs(elems) do
-            if el and el.Visible then fadeElement(el, false, 0.3) end
-        end
+        if espPage then espPage.Visible = (currentTab == "esp") end
+        -- 淡入
+        if dividerLine then fadeElement(dividerLine, false, 0.3) end
+        if flightTab then fadeElement(flightTab, false, 0.3) end
+        if walkTab then fadeElement(walkTab, false, 0.3) end
+        if espTab then fadeElement(espTab, false, 0.3) end
         minBtn.Text = "—"
     end
 end
@@ -383,28 +660,34 @@ switchTab = function(tabName)
     if tabName == currentTab then return end
     currentTab = tabName
 
-    if tabName == "flight" then
-        if flightPage then flightPage.Visible = true end
-        if walkPage then walkPage.Visible = false end
-        if flightTab then
-            flightTab.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
-            flightTab.TextColor3 = Color3.fromRGB(255, 255, 255)
+    -- 隐藏所有页
+    if flightPage then flightPage.Visible = false end
+    if walkPage then walkPage.Visible = false end
+    if espPage then espPage.Visible = false end
+
+    -- 标签样式
+    local function setTabStyle(tab, active)
+        if not tab then return end
+        if active then
+            tab.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+            tab.TextColor3 = Color3.fromRGB(255, 255, 255)
+        else
+            tab.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+            tab.TextColor3 = Color3.fromRGB(140, 140, 160)
         end
-        if walkTab then
-            walkTab.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-            walkTab.TextColor3 = Color3.fromRGB(140, 140, 160)
-        end
-    else
-        if flightPage then flightPage.Visible = false end
-        if walkPage then walkPage.Visible = true end
-        if flightTab then
-            flightTab.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-            flightTab.TextColor3 = Color3.fromRGB(140, 140, 160)
-        end
-        if walkTab then
-            walkTab.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
-            walkTab.TextColor3 = Color3.fromRGB(255, 255, 255)
-        end
+    end
+
+    setTabStyle(flightTab, tabName == "flight")
+    setTabStyle(walkTab, tabName == "walk")
+    setTabStyle(espTab, tabName == "esp")
+
+    -- 显示当前页
+    if tabName == "flight" and flightPage then
+        flightPage.Visible = true
+    elseif tabName == "walk" and walkPage then
+        walkPage.Visible = true
+    elseif tabName == "esp" and espPage then
+        espPage.Visible = true
     end
 end
 
@@ -413,7 +696,10 @@ local ok, err = pcall(function()
     -- 删除旧 UI
     local old = playerGui:FindFirstChild("CiCiHub")
     if old then old:Destroy() end
+    local oldEsp = playerGui:FindFirstChild("CiCiESP")
+    if oldEsp then oldEsp:Destroy() end
 
+    -- ===== 主 ScreenGui =====
     gui = Instance.new("ScreenGui")
     gui.Name = "CiCiHub"
     gui.ResetOnSpawn = false
@@ -421,6 +707,15 @@ local ok, err = pcall(function()
     gui.IgnoreGuiInset = false
     gui.DisplayOrder = 10
     gui.Parent = playerGui
+
+    -- ===== ESP 透视 ScreenGui =====
+    espGui = Instance.new("ScreenGui")
+    espGui.Name = "CiCiESP"
+    espGui.ResetOnSpawn = false
+    espGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    espGui.IgnoreGuiInset = false
+    espGui.DisplayOrder = 20
+    espGui.Parent = playerGui
 
     -- ===== 上升/下降按钮 (飞行时显示) =====
     upBtn = Instance.new("TextButton")
@@ -578,10 +873,10 @@ local ok, err = pcall(function()
     dividerLine.BorderSizePixel = 0
     dividerLine.Parent = panel
 
-    -- ===== 标签行 =====
+    -- ===== 标签行 (3个标签) =====
     flightTab = Instance.new("TextButton")
     flightTab.Name = "FlightTab"
-    flightTab.Size = UDim2.new(0.5, -6, 0, 30)
+    flightTab.Size = UDim2.new(0, 64, 0, 30)
     flightTab.Position = UDim2.new(0, 10, 0, 46)
     flightTab.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
     flightTab.BorderSizePixel = 0
@@ -598,8 +893,8 @@ local ok, err = pcall(function()
 
     walkTab = Instance.new("TextButton")
     walkTab.Name = "WalkTab"
-    walkTab.Size = UDim2.new(0.5, -6, 0, 30)
-    walkTab.Position = UDim2.new(0.5, 0, 0, 46)
+    walkTab.Size = UDim2.new(0, 64, 0, 30)
+    walkTab.Position = UDim2.new(0, 78, 0, 46)
     walkTab.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
     walkTab.BorderSizePixel = 0
     walkTab.Text = "移速"
@@ -612,6 +907,23 @@ local ok, err = pcall(function()
     local walkTabCorner = Instance.new("UICorner")
     walkTabCorner.CornerRadius = UDim.new(0, 8)
     walkTabCorner.Parent = walkTab
+
+    espTab = Instance.new("TextButton")
+    espTab.Name = "ESPTab"
+    espTab.Size = UDim2.new(0, 64, 0, 30)
+    espTab.Position = UDim2.new(0, 146, 0, 46)
+    espTab.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    espTab.BorderSizePixel = 0
+    espTab.Text = "透视"
+    espTab.TextColor3 = Color3.fromRGB(140, 140, 160)
+    espTab.Font = Enum.Font.GothamBold
+    espTab.TextSize = 14
+    espTab.AutoButtonColor = false
+    espTab.Parent = panel
+
+    local espTabCorner = Instance.new("UICorner")
+    espTabCorner.CornerRadius = UDim.new(0, 8)
+    espTabCorner.Parent = espTab
 
     -- ===== 飞行页 (容器) =====
     flightPage = Instance.new("Frame")
@@ -956,6 +1268,159 @@ local ok, err = pcall(function()
     walkHintLabel.TextXAlignment = Enum.TextXAlignment.Center
     walkHintLabel.Parent = walkPage
 
+    -- ===== 透视页 (容器) =====
+    espPage = Instance.new("Frame")
+    espPage.Name = "ESPPage"
+    espPage.Size = UDim2.new(1, 0, 1, -84)
+    espPage.Position = UDim2.new(0, 0, 0, 80)
+    espPage.BackgroundTransparency = 1
+    espPage.Visible = false
+    espPage.Parent = panel
+
+    -- 透视开关
+    espToggleBtn = Instance.new("TextButton")
+    espToggleBtn.Name = "ESPToggle"
+    espToggleBtn.Size = UDim2.new(1, -20, 0, 34)
+    espToggleBtn.Position = UDim2.new(0, 10, 0, 4)
+    espToggleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+    espToggleBtn.Text = "开启透视"
+    espToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    espToggleBtn.Font = Enum.Font.GothamBold
+    espToggleBtn.TextSize = 15
+    espToggleBtn.AutoButtonColor = true
+    espToggleBtn.Parent = espPage
+
+    local espToggleCorner = Instance.new("UICorner")
+    espToggleCorner.CornerRadius = UDim.new(0, 8)
+    espToggleCorner.Parent = espToggleBtn
+
+    -- 选项行 1: 显示名字 + 显示血量
+    local espOptRow1 = Instance.new("Frame")
+    espOptRow1.Name = "ESPOptRow1"
+    espOptRow1.Size = UDim2.new(1, -20, 0, 26)
+    espOptRow1.Position = UDim2.new(0, 10, 0, 44)
+    espOptRow1.BackgroundTransparency = 1
+    espOptRow1.Parent = espPage
+
+    espNameBtn = Instance.new("TextButton")
+    espNameBtn.Name = "ESPName"
+    espNameBtn.Size = UDim2.new(0.5, -3, 1, 0)
+    espNameBtn.Position = UDim2.new(0, 0, 0, 0)
+    espNameBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
+    espNameBtn.Text = "显示名字"
+    espNameBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    espNameBtn.Font = Enum.Font.GothamBold
+    espNameBtn.TextSize = 12
+    espNameBtn.AutoButtonColor = false
+    espNameBtn.Parent = espOptRow1
+
+    local espNameCorner = Instance.new("UICorner")
+    espNameCorner.CornerRadius = UDim.new(0, 6)
+    espNameCorner.Parent = espNameBtn
+
+    espHealthBtn = Instance.new("TextButton")
+    espHealthBtn.Name = "ESPHealth"
+    espHealthBtn.Size = UDim2.new(0.5, -3, 1, 0)
+    espHealthBtn.Position = UDim2.new(0.5, 3, 0, 0)
+    espHealthBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
+    espHealthBtn.Text = "显示血量"
+    espHealthBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    espHealthBtn.Font = Enum.Font.GothamBold
+    espHealthBtn.TextSize = 12
+    espHealthBtn.AutoButtonColor = false
+    espHealthBtn.Parent = espOptRow1
+
+    local espHealthCorner = Instance.new("UICorner")
+    espHealthCorner.CornerRadius = UDim.new(0, 6)
+    espHealthCorner.Parent = espHealthBtn
+
+    -- 选项行 2: 显示方框 + 显示距离
+    local espOptRow2 = Instance.new("Frame")
+    espOptRow2.Name = "ESPOptRow2"
+    espOptRow2.Size = UDim2.new(1, -20, 0, 26)
+    espOptRow2.Position = UDim2.new(0, 10, 0, 74)
+    espOptRow2.BackgroundTransparency = 1
+    espOptRow2.Parent = espPage
+
+    espBoxBtn = Instance.new("TextButton")
+    espBoxBtn.Name = "ESPBox"
+    espBoxBtn.Size = UDim2.new(0.5, -3, 1, 0)
+    espBoxBtn.Position = UDim2.new(0, 0, 0, 0)
+    espBoxBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 75)
+    espBoxBtn.Text = "显示方框（备用）"
+    espBoxBtn.TextColor3 = Color3.fromRGB(180, 180, 200)
+    espBoxBtn.Font = Enum.Font.GothamBold
+    espBoxBtn.TextSize = 12
+    espBoxBtn.AutoButtonColor = false
+    espBoxBtn.Parent = espOptRow2
+
+    local espBoxCorner = Instance.new("UICorner")
+    espBoxCorner.CornerRadius = UDim.new(0, 6)
+    espBoxCorner.Parent = espBoxBtn
+
+    espDistanceBtn = Instance.new("TextButton")
+    espDistanceBtn.Name = "ESPDistance"
+    espDistanceBtn.Size = UDim2.new(0.5, -3, 1, 0)
+    espDistanceBtn.Position = UDim2.new(0.5, 3, 0, 0)
+    espDistanceBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
+    espDistanceBtn.Text = "显示距离"
+    espDistanceBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    espDistanceBtn.Font = Enum.Font.GothamBold
+    espDistanceBtn.TextSize = 12
+    espDistanceBtn.AutoButtonColor = false
+    espDistanceBtn.Parent = espOptRow2
+
+    local espDistanceCorner = Instance.new("UICorner")
+    espDistanceCorner.CornerRadius = UDim.new(0, 6)
+    espDistanceCorner.Parent = espDistanceBtn
+
+    -- 忽略队友
+    espTeamBtn = Instance.new("TextButton")
+    espTeamBtn.Name = "ESPTeam"
+    espTeamBtn.Size = UDim2.new(1, -20, 0, 26)
+    espTeamBtn.Position = UDim2.new(0, 10, 0, 104)
+    espTeamBtn.BackgroundColor3 = Color3.fromRGB(55, 55, 75)
+    espTeamBtn.Text = "忽略队友"
+    espTeamBtn.TextColor3 = Color3.fromRGB(180, 180, 200)
+    espTeamBtn.Font = Enum.Font.GothamBold
+    espTeamBtn.TextSize = 12
+    espTeamBtn.AutoButtonColor = false
+    espTeamBtn.Parent = espPage
+
+    local espTeamCorner = Instance.new("UICorner")
+    espTeamCorner.CornerRadius = UDim.new(0, 6)
+    espTeamCorner.Parent = espTeamBtn
+
+    -- 高亮模式（Highlight + BillboardGui）
+    espHighlightBtn = Instance.new("TextButton")
+    espHighlightBtn.Name = "ESPHighlight"
+    espHighlightBtn.Size = UDim2.new(1, -20, 0, 26)
+    espHighlightBtn.Position = UDim2.new(0, 10, 0, 136)
+    espHighlightBtn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
+    espHighlightBtn.Text = "高亮模式（推荐）"
+    espHighlightBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    espHighlightBtn.Font = Enum.Font.GothamBold
+    espHighlightBtn.TextSize = 12
+    espHighlightBtn.AutoButtonColor = false
+    espHighlightBtn.Parent = espPage
+
+    local espHighlightCorner = Instance.new("UICorner")
+    espHighlightCorner.CornerRadius = UDim.new(0, 6)
+    espHighlightCorner.Parent = espHighlightBtn
+
+    -- 透视提示
+    espHintLabel = Instance.new("TextLabel")
+    espHintLabel.Name = "ESPHint"
+    espHintLabel.Size = UDim2.new(1, -20, 0, 16)
+    espHintLabel.Position = UDim2.new(0, 10, 0, 170)
+    espHintLabel.BackgroundTransparency = 1
+    espHintLabel.Text = "默认高亮跟随模式，远距离不下坠"
+    espHintLabel.TextColor3 = Color3.fromRGB(140, 140, 160)
+    espHintLabel.Font = Enum.Font.Gotham
+    espHintLabel.TextSize = 10
+    espHintLabel.TextXAlignment = Enum.TextXAlignment.Center
+    espHintLabel.Parent = espPage
+
     -- 初始化显示
     updateSpeedDisplay()
     updateWalkSpeedDisplay()
@@ -1010,6 +1475,45 @@ local ok, err = pcall(function()
     walkTab.MouseButton1Click:Connect(function()
         switchTab("walk")
     end)
+    espTab.MouseButton1Click:Connect(function()
+        switchTab("esp")
+    end)
+
+    -- 透视开关
+    espToggleBtn.MouseButton1Click:Connect(function()
+        toggleESP()
+    end)
+
+    -- 透视选项按钮
+    local function updateOptBtn(btn, enabled)
+        if not btn then return end
+        if enabled then
+            btn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
+            btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        else
+            btn.BackgroundColor3 = Color3.fromRGB(55, 55, 75)
+            btn.TextColor3 = Color3.fromRGB(180, 180, 200)
+        end
+    end
+
+    espNameBtn.MouseButton1Click:Connect(function()
+        updateOptBtn(espNameBtn, setESPOption("name"))
+    end)
+    espHealthBtn.MouseButton1Click:Connect(function()
+        updateOptBtn(espHealthBtn, setESPOption("health"))
+    end)
+    espBoxBtn.MouseButton1Click:Connect(function()
+        updateOptBtn(espBoxBtn, setESPOption("box"))
+    end)
+    espDistanceBtn.MouseButton1Click:Connect(function()
+        updateOptBtn(espDistanceBtn, setESPOption("distance"))
+    end)
+    espTeamBtn.MouseButton1Click:Connect(function()
+        updateOptBtn(espTeamBtn, setESPOption("team"))
+    end)
+    espHighlightBtn.MouseButton1Click:Connect(function()
+        updateOptBtn(espHighlightBtn, setESPOption("highlight"))
+    end)
 
     -- 最小化/关闭
     minBtn.MouseButton1Click:Connect(function()
@@ -1018,6 +1522,9 @@ local ok, err = pcall(function()
     closeBtn.MouseButton1Click:Connect(function()
         if flying then stopFly() end
         if walkSpeedLocked then toggleWalkSpeedLock() end
+        if espEnabled then toggleESP() end
+        clearAllESP()
+        if espGui then espGui:Destroy() end
         gui:Destroy()
     end)
 
@@ -1087,4 +1594,15 @@ player.CharacterAdded:Connect(function()
     applyWalkSpeed()
 end)
 
-print("[辞辞中心] 已加载 | 设备:", isTouch and "手机" or "PC", "| 飞行 + 移速 | R6/R15兼容")
+-- ===== 玩家进出 (ESP 自动追踪) =====
+Players.PlayerAdded:Connect(function(p)
+    if espEnabled then
+        createESPForPlayer(p)
+    end
+end)
+
+Players.PlayerRemoving:Connect(function(p)
+    removeESPForPlayer(p)
+end)
+
+print("[辞辞中心] 已加载 | 设备:", isTouch and "手机" or "PC", "| 飞行 + 移速 + 透视 | R6/R15兼容")
